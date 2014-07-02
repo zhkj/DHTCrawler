@@ -8,7 +8,8 @@ import utility
 import threading
 from config import INITIAL_NODES
 from bencode import bencode, bdecode
-from db import save_info_hashs, save_rtable
+from dbconnect import save_info_hashs, save_rtable
+
 
 K = 8
 TABLE_NUM = 160
@@ -16,11 +17,12 @@ TOKEN_LENGTH = 5
 NODE_ID_LENGTH = 20
 TRANS_ID_LENGTH = 2
 
+
 class KRPC(object):
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         try:
-            self.socket.bind('localhost', 0)
+            self.socket.bind(('192.168.1.104', 0))
         except:
             print "Cannot bind the port!"
 
@@ -70,7 +72,7 @@ class DHTProtocol(KRPC):
                     if random.randint(0, 1):
                         index = random.randint(0, K - 1)
                         self.rtable[rtable_index][index] = node
-            self.rtable.mutex.release()
+            self.rtable_mutex.release()
 
 
 
@@ -189,17 +191,16 @@ class DHTProtocol(KRPC):
             nodes = []
             self.rtable = [[] for i in range(TABLE_NUM)]
             for inital_node in INITIAL_NODES:
-                nodes.append(utility.generate_id(NODE_ID_LENGTH), inital_node)
+                nodes.append([utility.generate_node_id(), inital_node])
             self.add_nodes_to_rtable(nodes)
-
         while True:
             self.find_node()
             self.save_rtable()
-            time.sleep(8)
+            time.sleep(3)
 
-    
+
     def find_node(self):
-        target_node_id = utility.generate_id(NODE_ID_LENGTH)
+        target_node_id = utility.generate_node_id()
             
         query = {}
         query["t"] = utility.generate_id(TRANS_ID_LENGTH)
@@ -209,18 +210,18 @@ class DHTProtocol(KRPC):
         query["a"]["id"] = self.node_id
         query["a"]["target"] = target_node_id
         query = bencode(query)
-
+        
         if self.rtable_mutex.acquire():
             for bucket in self.rtable:
                 for node in bucket:
                     self.socket.sendto(query, node[1])
-            self.rtable.mutex.release()
+            self.rtable_mutex.release()
 
 
     def save_rtable(self):
         if self.rtable_mutex.acquire():
             save_rtable(self.node_id, self.rtable)
-            self.rtable.mutex.release()
+            self.rtable_mutex.release()
 
     
     def start(self):

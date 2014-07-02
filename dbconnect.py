@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding=utf-8
 
+import utility
 import datetime
 import pymongo
 from config import HOST, PORT
@@ -13,7 +14,7 @@ def save_info_hashs(info_hashs):
     
     for info_hash in info_hashs:
         info_hash_record = {
-            "value": info_hash,
+            "value": utility.from_byte_to_hex(info_hash),
             "date" : datetime.datetime.utcnow() 
         }
         info_hashs_collection.insert(info_hash_record)
@@ -25,11 +26,12 @@ def get_info_hashs():
     client = pymongo.MongoClient(HOST, PORT)
     database = client.dht_crawler
     info_hashs_collection = database.info_hashs
-    
+   
     info_hashs = []
-    for record in list(info_hashs_collection.find()):
-        info_hashs.append(record)    
-    
+    for info_hash_record in info_hashs_collection.find():
+        info_hash_record["value"] = utility.from_hex_to_byte(info_hash_record["value"])
+        info_hashs.append(info_hash_record) 
+
     client.close()
 
     return info_hashs
@@ -39,7 +41,12 @@ def save_rtable(node_id, rtable):
     client = pymongo.MongoClient(HOST, PORT)
     database = client.dht_crawler
     rtables_collection = database.rtables
-    
+
+    node_id = utility.from_byte_to_hex(node_id)
+    for bucket in rtable:
+        for node in bucket:
+            node[0] = utility.from_byte_to_hex(node[0])
+
     if rtables_collection.find_one({"node_id" : node_id}):
         rtables_collection.update({"node_id" : node_id}, {"$set" : {"rtable" : rtable}})
     else:
@@ -48,6 +55,10 @@ def save_rtable(node_id, rtable):
             "rtable" : rtable
         }
         rtables_collection.insert(rtable_record)
+    
+    for bucket in rtable:
+        for node in bucket:
+            node[0] = utility.from_hex_to_byte(node[0])
 
     client.close()
 
@@ -57,13 +68,17 @@ def get_rtables():
     database = client.dht_crawler
     rtables_collection = database.rtables
     
-    rtables = []
-    for record in list(rtables_collection.find()):
-        rtables.append(record)
+    rtables = list(rtables_collection.find())
+    
+    for rtable in rtables:
+        rtable["node_id"] = utility.from_hex_to_byte(rtable["node_id"])
+        for bucket in rtable["rtable"]:
+            for node in bucket:
+                node[0] = utility.from_hex_to_byte(node[0])
 
     client.close()
 
-    return rtables_collection
+    return rtables
 
 
 def save_bt_info(bt_info):

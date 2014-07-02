@@ -35,7 +35,14 @@ def get_and_save_bt_info(info_hash_record):
     }
 
     request = urllib2.Request(full_url, headers = headers)
-    content = bdecode(urllib2.urlopen(request).read())
+    
+    try:
+        content = urllib2.urlopen(request, timeout = 10).read()
+    except:
+        print "Cannot get the bt file for " + btih
+        return
+
+    content = bdecode(content)
     
     bt_info = {}
     bt_info["info_hash"] = info_hash_record["value"]
@@ -58,7 +65,8 @@ def get_and_save_bt_info(info_hash_record):
 
 def main():
     hash_infos = get_hash_infos()
-    get_and_save_bt_info()
+    for hash_info_record in hash_infos:
+        get_and_save_bt_info(hash_info_record)
 
 
 if __name__ == '__main__':
