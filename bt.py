@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # coding=utf-8
 
+import utility
 import urllib2
-from dbconnect import save_bt_info, get_hash_infos
+from dbconnect import save_bt_info, get_info_hashs
 from bencode import bdecode
 
 def get_btih(info_hash_record):
@@ -22,7 +23,7 @@ def get_request_url(btih):
     refer_url = basic_url + "/" + btih[0:2] + "/" + btih[-2:] + "/"
     full_url = refer_url+ btih + ".torrent"
     
-    return full_url, refer_url
+    return refer_url, full_url
 
 
 def get_and_save_bt_info(info_hash_record):
@@ -41,11 +42,14 @@ def get_and_save_bt_info(info_hash_record):
     except:
         print "Cannot get the bt file for " + btih
         return
-
-    content = bdecode(content)
+   
+    try:
+        content = bdecode(content)
+    except:
+        return
     
     bt_info = {}
-    bt_info["info_hash"] = info_hash_record["value"]
+    bt_info["info_hash"] = utility.from_byte_to_hex(info_hash_record["value"])
     bt_info["magnet"] = "magnet:?xt=urn:btih:" + btih
     bt_info["date"] = info_hash_record["date"]
 
@@ -56,7 +60,7 @@ def get_and_save_bt_info(info_hash_record):
         bt_info["files"] = []
         files = info["files"]
         for file in files:
-            bt_info["files"].append([file["path"], file["length"]])
+            bt_info["files"].append([file["path"][0], file["length"]])
     else:
         bt_info["length"] = info["length"]
 
@@ -64,9 +68,10 @@ def get_and_save_bt_info(info_hash_record):
 
 
 def main():
-    hash_infos = get_hash_infos()
-    for hash_info_record in hash_infos:
-        get_and_save_bt_info(hash_info_record)
+    info_hashs = get_info_hashs()
+
+    for info_hash_record in info_hashs:
+        get_and_save_bt_info(info_hash_record)
 
 
 if __name__ == '__main__':
