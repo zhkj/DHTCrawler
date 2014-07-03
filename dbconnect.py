@@ -37,7 +37,7 @@ def get_info_hashs():
     return info_hashs
 
 
-def save_rtable(node_id, rtable):
+def save_rtable(node_id, rtable, addr):
     client = pymongo.MongoClient(HOST, PORT)
     database = client.dht_crawler
     rtables_collection = database.rtables
@@ -52,6 +52,7 @@ def save_rtable(node_id, rtable):
     else:
         rtable_record = {
             "node_id" : node_id,
+            "addr" : list(addr),
             "rtable" : rtable
         }
         rtables_collection.insert(rtable_record)
@@ -86,7 +87,10 @@ def save_bt_info(bt_info):
     database = client.dht_crawler
     bt_infos_collection = database.bt_infos
     
-    bt_infos_collection.insert(bt_info)
+    try:
+        bt_infos_collection.insert(bt_info)
+    except:
+        print "Cannot insert bt_info into database"
 
     client.close()
 
