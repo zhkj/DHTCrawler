@@ -12,7 +12,7 @@ def main():
     rtables = get_rtables()
 
     for i in range(min(node_num, len(rtables))):
-        nodes[i] = Node(rtables[i]["node_id"], rtables[i]["rtable"])
+        nodes[i] = Node(rtables[i]["node_id"], rtables[i]["rtable"], tuple(rtables[i]["addr"]))
         nodes[i].protocol.start()
     for i in range(len(rtables), node_num):
         nodes[i] = Node()
