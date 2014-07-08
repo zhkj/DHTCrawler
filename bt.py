@@ -3,7 +3,7 @@
 
 import utility
 import urllib2
-from dbconnect import save_bt_info, get_info_hashs
+from dbconnect import save_bt_info, get_info_hashs, get_gp_info_hashs
 from bencode import bdecode
 
 def get_btih(info_hash_record):
@@ -69,10 +69,12 @@ def get_and_save_bt_info(info_hash_record):
 
 def main():
     info_hashs = get_info_hashs()
-
+    print len(info_hashs)
+    print get_gp_info_hashs()
+    """    
     for info_hash_record in info_hashs:
         get_and_save_bt_info(info_hash_record)
-
+    """
 
 if __name__ == '__main__':
     main()

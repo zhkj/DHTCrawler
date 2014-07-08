@@ -37,6 +37,33 @@ def get_info_hashs():
     return info_hashs
 
 
+def get_gp_info_hashs():
+    client = pymongo.MongoClient(HOST, PORT)
+    database = client.dht_crawler
+    gp_info_hashs_collection = database.get_peer_info_hashs
+   
+    gp_info_hashs = list(gp_info_hashs_collection.find())
+    
+    client.close()
+
+    return len(gp_info_hashs)
+
+
+def save_get_peer_info_hashs(get_peer_info_hashs):
+    client = pymongo.MongoClient(HOST, PORT)
+    database = client.dht_crawler
+    get_peer_info_hashs_collection = database.get_peer_info_hashs
+    
+    for get_peer_info_hash in get_peer_info_hashs:
+        get_peer_info_hash_record = {
+            "value": utility.from_byte_to_hex(get_peer_info_hash),
+            "date" : datetime.datetime.utcnow() 
+        }
+        get_peer_info_hashs_collection.insert(get_peer_info_hash_record)
+    
+    client.close()
+
+
 def save_rtable(node_id, rtable, addr):
     client = pymongo.MongoClient(HOST, PORT)
     database = client.dht_crawler
