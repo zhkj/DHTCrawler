@@ -18,63 +18,99 @@ def get_btih(info_hash_record):
     return btih
 
 
-def get_request_url(btih):
+def analyse_bt_file_with_torcache(btih):
+    basic_url = "http://torcache.net/torrent"
+    request_url = basic_url + btih + ".torrent"
+
+    header_options = {}
+
+    content = get_bt_file(request_url, header_options)
+    bt_info = get_file_info(content)
+
+    return bt_info
+
+
+def analyse_bt_file_with_btbox(btih):
     basic_url = "http://bt.box.n0808.com"
     refer_url = basic_url + "/" + btih[0:2] + "/" + btih[-2:] + "/"
-    full_url = refer_url+ btih + ".torrent"
+    request_url = refer_url+ btih + ".torrent"
+
+    header_options = {
+        "Referer" : refer_url
+    }
     
-    return refer_url, full_url
+    content = get_bt_file(request_url, header_options)
+    bt_info = get_file_info(content)
+
+    return bt_info
+
+
+def get_file_info(content):
+    if content:
+        try:
+            content = bdecode(content)
+        except:
+            return {}
+
+        bt_info = {}
+        info = content["info"]
+        bt_info["name"] = info["name"]
+
+        if info.has_key("files"):
+            bt_info["files"] = []
+            files = info["files"]
+            for file in files:
+                bt_info["files"].append([file["path"][0], file["length"]])
+        else:
+            bt_info["length"] = info["length"]
+    else:
+        return {}
+
+
+def get_bt_file(request_url, header_options = {}):
+    
+    headers = {
+        "User-Agent" : 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
+    }
+    for option in header_options.keys():
+        headers[option] = header_options[option]
+
+    request = urllib2.urlopen(request_url, headers = headers)
+    
+
+    try:
+        content = urllib2.urlopen(request, timeout = 10).read()
+    except:
+        content = ""
+
+    return content
 
 
 def get_and_save_bt_info(info_hash_record):
     btih = get_btih(info_hash_record)
-    refer_url, full_url = get_request_url(btih)
-    
-    headers = {
-        "Referer" : refer_url,
-        "User-Agent" : 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
-    }
+  
+    methods = [analyse_bt_file_with_torcache, analyse_bt_file_with_btbox]
 
-    request = urllib2.Request(full_url, headers = headers)
-    
-    try:
-        content = urllib2.urlopen(request, timeout = 10).read()
-    except:
-        print "Cannot get the bt file for " + btih
-        return
-   
-    try:
-        content = bdecode(content)
-    except:
-        return
-    
-    bt_info = {}
-    bt_info["info_hash"] = utility.from_byte_to_hex(info_hash_record["value"])
-    bt_info["magnet"] = "magnet:?xt=urn:btih:" + btih
-    bt_info["date"] = info_hash_record["date"]
-
-    info = content["info"]
-    bt_info["name"] = info["name"]
-
-    if info.has_key("files"):
-        bt_info["files"] = []
-        files = info["files"]
-        for file in files:
-            bt_info["files"].append([file["path"][0], file["length"]])
-    else:
-        bt_info["length"] = info["length"]
-
-    save_bt_info(bt_info)
+    for method in methods:
+        bt_info = method(btih)
+        if bt_info:
+            bt_info["info_hash"] = utility.from_byte_to_hex(info_hash_record["value"])
+            bt_info["magnet"] = "magnet:?xt=urn:btih:" + btih
+            bt_info["date"] = info_hash_record["date"]
+            save_bt_info(bt_info)
+            
+            break
 
 
 def main():
-    info_hashs = get_info_hashs()
+    """
+    info_hashs = list(get_info_hashs())
     print len(info_hashs)
-    print get_gp_info_hashs()
+    get_peer_info_hashs = list(get_gp_info_hashs())
+    print len(get_peer_info_hashs)
     """    
     for info_hash_record in info_hashs:
         get_and_save_bt_info(info_hash_record)
-    """
 
 if __name__ == '__main__':
     main()
