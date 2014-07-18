@@ -20,7 +20,7 @@ def get_btih(info_hash_record):
 
 def analyse_bt_file_with_torcache(btih):
     basic_url = "http://torcache.net/torrent"
-    request_url = basic_url + btih + ".torrent"
+    request_url = basic_url + "/" + btih + ".torrent"
 
     header_options = {}
 
