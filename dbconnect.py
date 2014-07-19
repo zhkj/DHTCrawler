@@ -7,9 +7,10 @@ import pymongo
 from config import HOST, PORT
 
 
+
 def save_info_hashs(info_hashs):
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     info_hashs_collection = database.info_hashs
     
     for info_hash in info_hashs:
@@ -24,7 +25,7 @@ def save_info_hashs(info_hashs):
 
 def get_info_hashs():
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     info_hashs_collection = database.info_hashs
    
     info_hashs = []
@@ -39,7 +40,7 @@ def get_info_hashs():
 
 def get_gp_info_hashs():
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     gp_info_hashs_collection = database.get_peer_info_hashs
    
     gp_info_hashs = list(gp_info_hashs_collection.find())
@@ -51,7 +52,7 @@ def get_gp_info_hashs():
 
 def save_get_peer_info_hashs(get_peer_info_hashs):
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     get_peer_info_hashs_collection = database.get_peer_info_hashs
     
     for get_peer_info_hash in get_peer_info_hashs:
@@ -66,7 +67,7 @@ def save_get_peer_info_hashs(get_peer_info_hashs):
 
 def save_rtable(node_id, rtable, addr):
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     rtables_collection = database.rtables
 
     node_id = utility.from_byte_to_hex(node_id)
@@ -93,7 +94,7 @@ def save_rtable(node_id, rtable, addr):
 
 def get_rtables():
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     rtables_collection = database.rtables
     
     rtables = list(rtables_collection.find())
@@ -111,7 +112,7 @@ def get_rtables():
 
 def save_bt_info(bt_info):
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     bt_infos_collection = database.bt_infos
     
     try:
@@ -124,7 +125,7 @@ def save_bt_info(bt_info):
 
 def get_bt_infos():
     client = pymongo.MongoClient(HOST, PORT)
-    database = client.dht_crawler
+    database = client.dhtcrawler
     bt_infos_collection = database.bt_infos
 
     return list(bt_infos_collection.find())
