@@ -3,6 +3,7 @@
 
 import utility
 import urllib2
+import StringIO, gzip
 from dbconnect import save_bt_info, get_info_hashs, get_gp_info_hashs
 from bencode import bdecode
 
@@ -22,8 +23,9 @@ def analyse_bt_file_with_torcache(btih):
     basic_url = "http://torcache.net/torrent"
     request_url = basic_url + "/" + btih + ".torrent"
 
-    header_options = {}
-
+    header_options = {
+        "Accept-Encoding" : "gzip,deflate,sdch"
+    }
     content = get_bt_file(request_url, header_options)
     bt_info = get_file_info(content)
 
@@ -67,6 +69,14 @@ def get_file_info(content):
         return {}
 
 
+def decode_gzip(gzip_data):
+    compressed_stream = StringIO.StringIO(gzip_data)
+    gziper = gzip.GzipFile(fileobj = compressed_stream)
+    data = gziper.read()
+
+    return data
+
+
 def get_bt_file(request_url, header_options = {}):
     
     headers = {
@@ -79,7 +89,10 @@ def get_bt_file(request_url, header_options = {}):
     
 
     try:
-        content = urllib2.urlopen(request, timeout = 10).read()
+        response = urllib2.urlopen(request, timeout = 10)
+        content = response.read()
+        if response.info().get('Content-Encoding') == 'gzip':
+            content = decode_gzip(content)
     except:
         content = ""
 
