@@ -26,7 +26,9 @@ class KRPC(object):
         try:
             self.socket.bind(addr)
         except:
-            addr = ('192.168.1.105', 0)
+            name = socket.getfqdn(socket.gethostname())
+            ip = socket.gethostbyname(name)
+            addr = (ip, 0)
             self.socket.bind(addr)
 
 
