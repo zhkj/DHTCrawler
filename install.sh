@@ -10,10 +10,9 @@ rpm -ivh jdk-8u11-linux-x64.rpm
 
 echo >> /etc/profile
 echo export JAVA_HOME=/usr/java/jdk1.8.0_11 >> /etc/profile
-echo JRE_HOME=/usr/java/jdk1.8.0_11/jre >> /etc/profile
-echo PATH=$PATH:$JAVA_HOME/bin:$JRE_HOME/bin >> /etc/profile
-echo CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar:$JRE_HOME/lib >> /etc/profile
-echo export JAVA_HOME JRE_HOME PATH CLASSPATH >> /etc/profile
+echo export JRE_HOME=/usr/java/jdk1.8.0_11/jre >> /etc/profile
+echo export PATH=$PATH:$JAVA_HOME/bin:$JRE_HOME/bin >> /etc/profile
+echo export CLASSPATH=.:$CLASSPATH:$JAVA_HOME/lib:$JRE_HOME/lib >> /etc/profile
 source /etc/profile
 
 #eclipse安装
