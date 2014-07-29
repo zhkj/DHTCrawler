@@ -5,7 +5,7 @@ rpm -e --nodeps tzdata-java-2012c-1.el6.noarch
 rpm -e --nodeps java-1.6.0-openjdk-1.6.0.0-1.45.1.11.1.el6.x86_64
 
 #下载和安装1.8版本的Jdk
-wget -P /usr/local/ http://download.oracle.com/otn-pub/java/jdk/8u11-b12/jdk-8u11-linux-x64.rpm
+wget -P /usr/local/ --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u11-b12/jdk-8u11-linux-x64.rpm -O jdk-8u11-linux-x64.rpm
 rpm -ivh jdk-8u11-linux-x64.rpm
 
 echo >> /etc/profile
