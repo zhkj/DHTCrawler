@@ -12,7 +12,6 @@ echo export PATH=$PATH:$JAVA_HOME/bin:$JRE_HOME/bin >> /etc/profile
 echo export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar:$JRE_HOME/lib >> /etc/profile
 source /etc/profile
 
-yum -y remove mysql-libs-5.1.61-4.el6.x86_64
 rpm -qa mysql | awk '{print "rpm -e --nodeps $0" | "bash"}'
 
 rpm -ivh MySQL-server-5.5.30-1.el6.x86_64.rpm
