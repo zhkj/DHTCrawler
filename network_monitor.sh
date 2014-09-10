@@ -17,13 +17,12 @@ function ping_test(){
     host=$1
     loss_rate=`ping -c10 $host | egrep -o "[0-9]{1,3}%" | cut -d "%" -f1`
 
-
     if [ ! $loss_rate ];
     then
         echo `get_date` "Unknown host name or other network error!"
         return 1
     else
-        echo `get_date` "Loss rate is $loss_rate%"
+        echo `get_date` "Loss rate of packages is $loss_rate%"
         
         if [ $loss_rate -gt 50 ];
         then
@@ -41,7 +40,7 @@ function get_pid(){
         exit 1
     fi
 
-    pid=`jps | grep $1 | head -n 1 | awk {print $1}`
+    pid=`jps | grep $1 | head -n 1 | awk '{print $1}'`
 
     if [ ! $pid ];
     then
@@ -106,9 +105,9 @@ function kill_all_related_processes(){
     start_server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
     start_activemq_process="activemq.jar"                    #activemq.jar
     
-    kill_process $start_node_process
-    kill_process $start_server_process
-    kill_process $start_activemq_process
+    kill_process $start_node_process 2>&1
+    kill_process $start_server_process 2>&1
+    kill_process $start_activemq_process 2>&1
 }
 
 
@@ -117,9 +116,9 @@ function restart_all_related_processes(){
     start_node_cmd="/home/jiangbo/build/StartNode.sh"
     start_server_cmd="/home/jiangbo/build/StartServer.sh"
 
-    start_process $start_activemq_cmd
-    start_process $start_server_cmd
-    start_process $start_node_cmd
+    start_process $start_activemq_cmd 2>&1
+    start_process $start_server_cmd 2>&1
+    start_process $start_node_cmd 2>&1
 }
 
 
@@ -127,7 +126,7 @@ function main(){
     while true;
     do
         ping_test "plus.google.com"
-        if [kill $? -eq 0 ];
+        if [ $? -eq 0 ];
         then
             echo `get_date` "Network works normally"
         else
@@ -135,9 +134,10 @@ function main(){
             echo `get_date` "Try to kill all related processes"
             kill_all_related_processes
             echo `get_date` "Try to restart all related processes"
-            restart_all_processes
+            restart_all_related_processes
         fi
-
+        
+        echo 
         sleep $sleep_time
     done
 }
