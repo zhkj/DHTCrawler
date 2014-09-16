@@ -105,51 +105,51 @@ function kill_process(){
 
 
 function check_all_related_processes(){
-    start_node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
-    start_server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
-    start_activemq_process="activemq.jar"                    #activemq.jar
+    node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
+    server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
+    activemq_process="activemq.jar"                    #activemq.jar
 
     start_activemq_cmd="/home/zhengkj/code/shell/crawler/build/StartActiveMQ.sh"
     start_server_cmd="/home/zhengkj/code/shell/crawler/build/StartServer.sh"
     start_node_cmd="/home/zhengkj/code/shell/crawler/build/StartNode.sh"
     
-    get_pid $start_activemq_process >/dev/null
+    get_pid $activemq_process >/dev/null
     if [ $? -eq 0 ];
     then
         echo `get_date` "ActiveMQ is running"
     else
         echo `get_date` "ActiveMQ is not running! Try to start ActiveMQ!"
-        start_process $start_activemq_cmd $start_activemq_process
+        start_process $start_activemq_cmd $activemq_process
     fi
 
-    get_pid $start_server_process > /dev/null
+    get_pid $server_process > /dev/null
     if [ $? -eq 0 ];
     then
         echo `get_date` "CrawlerServer is running"
     else
         echo `get_date` "CrawlerServer is not running! Try to start CrawlerServer"
-        start_process $start_server_cmd $start_server_process
+        start_process $start_server_cmd $server_process
     fi
 
-    get_pid $start_node_process > /dev/null
+    get_pid $node_process > /dev/null
     if [ $? -eq 0 ];
     then
         echo `get_date` "CrawlerNode is running"
     else
         echo `get_date` "CrawlerNode is not running! Try to start CrawlerNode"
-        start_process $start_node_cmd $start_node_process
+        start_process $start_node_cmd $node_process
     fi
 }
 
 
 function kill_all_related_processes(){
-    start_node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
-    start_server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
-    start_activemq_process="activemq.jar"                    #activemq.jar
+    node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
+    server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
+    activemq_process="activemq.jar"                    #activemq.jar
     
-    kill_process $start_node_process 2>&1
-    kill_process $start_server_process 2>&1
-    kill_process $start_activemq_process 2>&1
+    kill_process $node_process 2>&1
+    kill_process $server_process 2>&1
+    kill_process $activemq_process 2>&1
 }
 
 
