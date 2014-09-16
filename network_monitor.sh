@@ -54,15 +54,18 @@ function get_pid(){
 
 
 function start_process(){
-    if [ $# -lt 1 ];
+    if [ $# -lt 2 ];
     then
-        echo "Function Usage: start_process full_command"
+        echo "Function Usage: start_process full_command process_name"
         exit 1
     fi
 
     full_command=$1
+    process_name=$2
     
     $full_command
+
+    jps | grep $process_name >/dev/null
     if [ $? -eq 0 ];
     then
         echo `get_date` "Start process $full_command sucessfully"
@@ -85,6 +88,7 @@ function kill_process(){
     
     if [ $? -eq 1 ];
     then
+        echo `get_date` "Process $1 has been already killed"
         return 1
     fi
 
@@ -100,6 +104,44 @@ function kill_process(){
 }
 
 
+function check_all_related_processes(){
+    start_node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
+    start_server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
+    start_activemq_process="activemq.jar"                    #activemq.jar
+
+    start_activemq_cmd="/home/zhengkj/code/shell/crawler/build/StartActiveMQ.sh"
+    start_server_cmd="/home/zhengkj/code/shell/crawler/build/StartServer.sh"
+    start_node_cmd="/home/zhengkj/code/shell/crawler/build/StartNode.sh"
+    
+    get_pid $start_activemq_process >/dev/null
+    if [ $? -eq 0 ];
+    then
+        echo `get_date` "ActiveMQ is running"
+    else
+        echo `get_date` "ActiveMQ is not running! Try to start ActiveMQ!"
+        start_process $start_activemq_cmd $start_activemq_process
+    fi
+
+    get_pid $start_server_process > /dev/null
+    if [ $? -eq 0 ];
+    then
+        echo `get_date` "CrawlerServer is running"
+    else
+        echo `get_date` "CrawlerServer is not running! Try to start CrawlerServer"
+        start_process $start_server_cmd $start_server_process
+    fi
+
+    get_pid $start_node_process > /dev/null
+    if [ $? -eq 0 ];
+    then
+        echo `get_date` "CrawlerNode is running"
+    else
+        echo `get_date` "CrawlerNode is not running! Try to start CrawlerNode"
+        start_process $start_node_cmd $start_node_process
+    fi
+}
+
+
 function kill_all_related_processes(){
     start_node_process="GooglePlusCrawlerNode.jar"           #FacebookCrawlerNode.jar
     start_server_process="GooglePlusCrawlerServer.jar"       #FacebookCrawlerServer.jar
@@ -111,17 +153,6 @@ function kill_all_related_processes(){
 }
 
 
-function restart_all_related_processes(){     
-    start_activemq_cmd="/home/jiangbo/build/StartActiveMQ.sh"
-    start_node_cmd="/home/jiangbo/build/StartNode.sh"
-    start_server_cmd="/home/jiangbo/build/StartServer.sh"
-
-    start_process $start_activemq_cmd 2>&1
-    start_process $start_server_cmd 2>&1
-    start_process $start_node_cmd 2>&1
-}
-
-
 function main(){
     while true;
     do
@@ -129,12 +160,11 @@ function main(){
         if [ $? -eq 0 ];
         then
             echo `get_date` "Network works normally"
+            check_all_related_processes
         else
             echo `get_date` "Network cannot work"
             echo `get_date` "Try to kill all related processes"
             kill_all_related_processes
-            echo `get_date` "Try to restart all related processes"
-            restart_all_related_processes
         fi
         
         echo 
@@ -142,5 +172,6 @@ function main(){
     done
 }
 
-sleep_time=5
+
+sleep_time=60
 main
