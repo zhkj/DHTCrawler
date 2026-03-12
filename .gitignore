@@ -1,0 +1,18 @@
+# 环境变量（含密钥，不提交）
+.env
+
+# 虚拟环境
+venv/
+intelligence/venv/
+crawler/venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 向量数据库（本地生成，不提交）
+intelligence/chroma_db/
+
+# IDE
+.idea/
+.vscode/
+*.swp
