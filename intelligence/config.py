@@ -13,7 +13,7 @@ LLM_MODEL = "claude-haiku-4-5-20251001"  # 快且便宜，适合开发阶段
 # MongoDB（复用爬虫数据库）
 MONGO_HOST = os.getenv("MONGO_HOST", "127.0.0.1")
 MONGO_PORT = int(os.getenv("MONGO_PORT", 27017))
-MONGO_DB = "dhtcrawler"
+MONGO_DB = "dht"
 
 # ChromaDB
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")

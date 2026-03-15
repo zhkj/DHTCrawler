@@ -13,7 +13,7 @@ import asyncio
 import logging
 import signal
 
-from crawler.config import NODE_NUM, DHT_PORT, SAVE_INTERVAL, BOOTSTRAP_NODES
+from crawler.config import NODE_NUM, DHT_PORT, SAVE_INTERVAL, STATS_INTERVAL, BOOTSTRAP_NODES
 from crawler.dht.protocol import DHTProtocol, QUEUE_MAXSIZE
 from crawler.dht.routing_table import RoutingTable
 from crawler.dht.utils import generate_node_id, hex_to_bytes
@@ -22,11 +22,24 @@ from crawler.storage.mongodb import (
 )
 from crawler.metadata.fetcher import metadata_worker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+import os
+
+_log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, "crawler.log")
+
+_file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
-)
+))
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handler])
 logger = logging.getLogger("dhtcrawler")
 
 
@@ -39,18 +52,44 @@ async def _periodic_save(node_id: bytes, routing_table: RoutingTable, port: int)
         logger.info(f"节点 {node_id.hex()[:8]}... 路由表已保存，节点数: {size}")
 
 
+async def _periodic_stats(protocols: list["DHTProtocol"], queue: asyncio.Queue):
+    """周期性打印性能统计：吞吐量、队列水位、路由表大小"""
+    while True:
+        await asyncio.sleep(STATS_INTERVAL)
+        total_recv = total_sent = total_hashes = total_evicted = 0
+        for proto in protocols:
+            s = proto.get_stats()
+            total_recv    += s["msgs_recv"]
+            total_sent    += s["msgs_sent"]
+            total_hashes  += s["hashes_enqueued"]
+            total_evicted += s["nodes_evicted"]
+            rt_size = await proto.routing_table.size()
+            logger.info(
+                "[节点 %s] recv=%d sent=%d hashes=%d(%.2f/s) evicted=%d rt_size=%d",
+                s["node_id"], s["msgs_recv"], s["msgs_sent"],
+                s["hashes_enqueued"], s["hash_per_s"],
+                s["nodes_evicted"], rt_size,
+            )
+        logger.info(
+            "[汇总] recv=%d sent=%d hashes=%d evicted=%d queue=%d/%d",
+            total_recv, total_sent, total_hashes, total_evicted,
+            queue.qsize(), queue.maxsize,
+        )
+
+
 async def create_node(
     node_id: bytes,
     routing_table: RoutingTable,
     port: int,
     queue: asyncio.Queue,
-) -> asyncio.DatagramTransport:
+) -> tuple[asyncio.DatagramTransport, DHTProtocol]:
     loop = asyncio.get_running_loop()
+    protocol = DHTProtocol(node_id, routing_table, queue)
     transport, _ = await loop.create_datagram_endpoint(
-        lambda: DHTProtocol(node_id, routing_table, queue),
+        lambda: protocol,
         local_addr=("0.0.0.0", port),
     )
-    return transport
+    return transport, protocol
 
 
 async def main():
@@ -62,6 +101,7 @@ async def main():
     queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 
     transports: list[asyncio.DatagramTransport] = []
+    protocols:  list[DHTProtocol] = []
     save_tasks: list[asyncio.Task] = []
 
     for i in range(NODE_NUM):
@@ -78,18 +118,25 @@ async def main():
             routing_table = RoutingTable(node_id)
             logger.info(f"节点 {i} 新建: {node_id.hex()[:8]}...")
 
-        transport = await create_node(node_id, routing_table, port, queue)
+        transport, protocol = await create_node(node_id, routing_table, port, queue)
         transports.append(transport)
+        protocols.append(protocol)
 
         save_tasks.append(asyncio.create_task(
             _periodic_save(node_id, routing_table, port)
         ))
 
-    # 后台任务：消费队列 → 写入 MongoDB
-    drain_task = asyncio.create_task(drain_queue(queue))
+    # 元数据抓取独立队列（drain_queue 写完 MongoDB 后转发 announce_peer 到此队列）
+    metadata_queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 
-    # 后台任务：抓取种子元数据
-    fetch_task = asyncio.create_task(metadata_worker(queue))
+    # 后台任务：消费队列 → 写入 MongoDB → 转发 announce_peer 到 metadata_queue
+    drain_task = asyncio.create_task(drain_queue(queue, metadata_queue))
+
+    # 后台任务：从 metadata_queue 抓取种子元数据
+    fetch_task = asyncio.create_task(metadata_worker(metadata_queue))
+
+    # 后台任务：性能统计日志
+    stats_task = asyncio.create_task(_periodic_stats(protocols, queue))
 
     logger.info(f"DHT 爬虫启动，{NODE_NUM} 个节点，端口 {DHT_PORT}-{DHT_PORT + NODE_NUM - 1}")
     logger.info("按 Ctrl+C 优雅退出")
@@ -106,6 +153,7 @@ async def main():
     logger.info("正在关闭...")
     drain_task.cancel()
     fetch_task.cancel()
+    stats_task.cancel()
     for task in save_tasks:
         task.cancel()
     for transport in transports:

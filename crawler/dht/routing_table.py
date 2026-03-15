@@ -5,6 +5,7 @@
 import random
 import asyncio
 import logging
+import time
 from crawler.dht.utils import xor_distance, get_bucket_index
 from crawler.config import K, BUCKET_K
 
@@ -21,6 +22,8 @@ class RoutingTable:
         self._lock   = asyncio.Lock()
         # 160 个 bucket，每个 bucket 是一个列表
         self._buckets: list[list[Node]] = [[] for _ in range(160)]
+        # node_id → 最后活跃时间戳
+        self._last_seen: dict[bytes, float] = {}
 
     async def add(self, node_id: bytes, addr: tuple[str, int]):
         """
@@ -38,16 +41,52 @@ class RoutingTable:
             for i, (nid, _) in enumerate(bucket):
                 if nid == node_id:
                     bucket[i] = (node_id, addr)
+                    self._last_seen[node_id] = time.time()
                     return
             if len(bucket) < BUCKET_K:
                 bucket.append((node_id, addr))
             else:
-                # 桶已满：随机替换一个旧节点
-                bucket[random.randint(0, BUCKET_K - 1)] = (node_id, addr)
+                # 桶已满：优先替换最久未活跃的节点
+                oldest_id = min(
+                    (nid for nid, _ in bucket),
+                    key=lambda nid: self._last_seen.get(nid, 0),
+                )
+                oldest_age = time.time() - self._last_seen.get(oldest_id, 0)
+                if oldest_age > 60:  # 超过 60 秒未活跃才替换
+                    bucket[next(i for i, (nid, _) in enumerate(bucket) if nid == oldest_id)] = (node_id, addr)
+                    self._last_seen.pop(oldest_id, None)
+                # 否则丢弃新节点，保留已知活跃节点
+            self._last_seen[node_id] = time.time()
 
     async def add_many(self, nodes: list[Node]):
         for node_id, addr in nodes:
             await self.add(node_id, addr)
+
+    async def mark_seen(self, node_id: bytes):
+        """收到某节点的消息时更新其活跃时间"""
+        async with self._lock:
+            if node_id in self._last_seen:
+                self._last_seen[node_id] = time.time()
+
+    async def evict_stale(self, max_age: float) -> int:
+        """
+        淘汰超过 max_age 秒未活跃的节点。
+        返回淘汰数量。
+        """
+        cutoff = time.time() - max_age
+        evicted = 0
+        async with self._lock:
+            for bucket in self._buckets:
+                stale = [
+                    nid for nid, _ in bucket
+                    if self._last_seen.get(nid, 0) < cutoff
+                ]
+                for nid in stale:
+                    bucket[:] = [(n, a) for n, a in bucket if n != nid]
+                    self._last_seen.pop(nid, None)
+                    evicted += 1
+        return evicted
+
 
     async def get_closest(self, target_id: bytes, k: int = K) -> list[Node]:
         """返回离 target_id 最近的 K 个节点"""
@@ -80,22 +119,25 @@ class RoutingTable:
             return sum(len(b) for b in self._buckets)
 
     def to_serializable(self) -> list[list]:
-        """序列化为可存入 MongoDB 的格式"""
+        """序列化为可存入 MongoDB 的格式，包含 last_seen 时间戳"""
         result = []
         for bucket in self._buckets:
             result.append([
-                [node_id.hex(), list(addr)]
+                [node_id.hex(), list(addr), self._last_seen.get(node_id, 0)]
                 for node_id, addr in bucket
             ])
         return result
 
     @classmethod
     def from_serializable(cls, self_id: bytes, data: list[list]) -> "RoutingTable":
-        """从 MongoDB 数据恢复路由表"""
+        """从 MongoDB 数据恢复路由表，兼容旧格式（无 last_seen 字段）"""
         rt = cls(self_id)
+        now = time.time()
         for i, bucket in enumerate(data):
             for item in bucket:
                 node_id = bytes.fromhex(item[0])
                 addr    = tuple(item[1])
+                last_seen = item[2] if len(item) > 2 else now
                 rt._buckets[i].append((node_id, addr))
+                rt._last_seen[node_id] = last_seen
         return rt

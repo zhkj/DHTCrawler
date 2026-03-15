@@ -10,6 +10,9 @@ NODE_NUM    = int(os.getenv("DHT_NODE_NUM", 3))      # 并发节点数，越多�
 DHT_PORT    = int(os.getenv("DHT_PORT", 6881))        # 监听端口（多节点自动递增）
 FIND_NODE_INTERVAL = float(os.getenv("FIND_NODE_INTERVAL", 2.0))  # 主动探测间隔(秒)
 SAVE_INTERVAL      = float(os.getenv("SAVE_INTERVAL", 10.0))      # 路由表持久化间隔
+NODE_MAX_AGE       = float(os.getenv("NODE_MAX_AGE", 900.0))       # 节点最大存活时间(秒)，超时视为失效
+EVICT_INTERVAL     = float(os.getenv("EVICT_INTERVAL", 120.0))     # 淘汰检查间隔(秒)
+STATS_INTERVAL     = float(os.getenv("STATS_INTERVAL", 30.0))      # 性能统计日志间隔(秒)
 
 # 路由表每个 bucket 最大节点数（K 值）
 K         = 8
@@ -25,7 +28,7 @@ BOOTSTRAP_NODES = [
 # ── MongoDB ────────────────────────────────────────────────────────
 MONGO_HOST = os.getenv("MONGO_HOST", "127.0.0.1")
 MONGO_PORT = int(os.getenv("MONGO_PORT", 27017))
-MONGO_DB   = "dhtcrawler"
+MONGO_DB   = "dht"
 
 # ── 元数据抓取 ────────────────────────────────────────────────────
 # 抓取种子元数据的第三方缓存服务（按优先级排列）

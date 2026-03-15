@@ -32,10 +32,15 @@ def _db():
 
 # ── info_hash 批量写入 ────────────────────────────────────────────
 
-async def drain_queue(queue: asyncio.Queue, batch_size: int = 200, interval: float = 5.0):
+async def drain_queue(
+    queue: asyncio.Queue,
+    metadata_queue: asyncio.Queue | None = None,
+    batch_size: int = 200,
+    interval: float = 5.0,
+):
     """
     持续消费 info_hash 队列，批量写入 MongoDB。
-    作为独立协程运行，与网络层解耦。
+    若传入 metadata_queue，则将 announce_peer 的 item 转发给元数据抓取 worker。
     """
     while True:
         batch = []
@@ -54,6 +59,14 @@ async def drain_queue(queue: asyncio.Queue, batch_size: int = 200, interval: flo
 
         if batch:
             await asyncio.to_thread(_write_info_hashs, batch)
+            # 将 announce_peer 转发到元数据抓取队列
+            if metadata_queue is not None:
+                for item in batch:
+                    if item.get("source") == "announce_peer":
+                        try:
+                            metadata_queue.put_nowait(item)
+                        except asyncio.QueueFull:
+                            pass
 
 
 def _write_info_hashs(batch: list[dict]):
@@ -61,21 +74,18 @@ def _write_info_hashs(batch: list[dict]):
     db = _db()
     now = datetime.datetime.utcnow()
 
-    announce_docs, get_peer_docs = [], []
+    docs = []
     for item in batch:
-        doc = {"value": bytes_to_hex(item["hash"]), "date": now}
-        if item["source"] == "announce_peer":
-            announce_docs.append(doc)
-        else:
-            get_peer_docs.append(doc)
+        docs.append({
+            "value": bytes_to_hex(item["hash"]),
+            "source": item["source"],
+            "date": now,
+        })
 
     try:
-        if announce_docs:
-            db.info_hashs.insert_many(announce_docs, ordered=False)
-            logger.debug(f"写入 {len(announce_docs)} 条 announce_peer info_hash")
-        if get_peer_docs:
-            db.get_peer_info_hashs.insert_many(get_peer_docs, ordered=False)
-            logger.debug(f"写入 {len(get_peer_docs)} 条 get_peers info_hash")
+        if docs:
+            db.info_hashs.insert_many(docs, ordered=False)
+            logger.debug(f"写入 {len(docs)} 条 info_hash")
     except Exception as e:
         logger.error(f"MongoDB 写入失败: {e}")
 
