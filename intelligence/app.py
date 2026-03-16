@@ -5,7 +5,7 @@ Streamlit Web UI
 import streamlit as st
 from agents.orchestrator import Orchestrator
 from agents.memory import UserPreferences
-from db.mongo_client import get_recent_torrents
+from db.mongo_client import get_recent_torrents, get_alert_logs, mark_alerts_read
 
 st.set_page_config(page_title="DHT 情报助手", page_icon="🔍", layout="wide")
 
@@ -25,6 +25,45 @@ if "prefs" not in st.session_state:
 with st.sidebar:
     st.title("⚙️ 系统设置")
 
+    # ── 告警通知 ──────────────────────────────────────────────
+    st.subheader("告警通知")
+
+    unread_alerts = get_alert_logs(user_id="default", limit=50, unread_only=True)
+    # 也展示系统级信号词告警
+    system_alerts = get_alert_logs(user_id="__system__", limit=20, unread_only=True)
+    all_unread = unread_alerts + system_alerts
+    all_unread.sort(key=lambda x: x.get("triggered_at", ""), reverse=True)
+
+    if all_unread:
+        st.error(f"🔔 {len(all_unread)} 条未读告警")
+        for alert in all_unread[:10]:
+            alert_type = "🏷️ 信号词" if alert.get("type") == "signal" else "👤 自定义"
+            torrent_name = alert.get("torrent_name", "")[:50]
+            keywords = ", ".join(alert.get("matched_keywords", []))
+            categories = alert.get("categories", [])
+            cat_str = f" [{', '.join(categories)}]" if categories else ""
+
+            with st.container():
+                st.markdown(
+                    f"**{alert_type}{cat_str}**\n\n"
+                    f"`{torrent_name}`\n\n"
+                    f"命中: {keywords}"
+                )
+                triggered = alert.get("triggered_at", "")
+                if triggered:
+                    st.caption(str(triggered)[:19])
+                st.divider()
+
+        if st.button("全部标为已读"):
+            mark_alerts_read("default")
+            mark_alerts_read("__system__")
+            st.rerun()
+    else:
+        st.info("暂无未读告警")
+
+    st.divider()
+
+    # ── 告警关键词配置 ────────────────────────────────────────
     st.subheader("告警关键词")
     current_alerts = st.session_state.prefs.get_alerts()
     alerts_text = st.text_area(
@@ -39,6 +78,7 @@ with st.sidebar:
 
     st.divider()
 
+    # ── DHT 数据概况 ──────────────────────────────────────────
     st.subheader("DHT 数据概况")
     try:
         recent = get_recent_torrents(limit=5)
@@ -47,6 +87,13 @@ with st.sidebar:
             st.text(t.get("name", "")[:40] + "...")
     except Exception:
         st.warning("MongoDB 未连接")
+
+    st.divider()
+
+    # ── Monitor 状态 ──────────────────────────────────────────
+    from agents.monitor import is_running as monitor_running
+    monitor_status = "运行中" if monitor_running() else "未启动"
+    st.caption(f"Monitor Agent: {monitor_status}")
 
     st.divider()
 

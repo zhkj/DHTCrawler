@@ -55,3 +55,39 @@ def get_alerts(user_id: str) -> list[str]:
     db = get_db()
     doc = db.alerts.find_one({"user_id": user_id})
     return doc["keywords"] if doc else []
+
+
+def get_all_alert_rules() -> list[dict]:
+    """获取所有用户的告警规则，供 Monitor Agent 使用。"""
+    db = get_db()
+    return list(db.alerts.find({}, {"_id": 0}))
+
+
+def save_alert_log(log: dict):
+    """写入一条告警触发记录。"""
+    db = get_db()
+    db.alerts_log.insert_one(log)
+
+
+def get_alert_logs(user_id: str = None, limit: int = 20, unread_only: bool = False) -> list[dict]:
+    """读取告警记录，支持按用户和未读过滤。"""
+    db = get_db()
+    query = {}
+    if user_id:
+        query["user_id"] = user_id
+    if unread_only:
+        query["read"] = False
+    return list(
+        db.alerts_log.find(query, {"_id": 0})
+        .sort("triggered_at", -1)
+        .limit(limit)
+    )
+
+
+def mark_alerts_read(user_id: str):
+    """将用户的所有未读告警标记为已读。"""
+    db = get_db()
+    db.alerts_log.update_many(
+        {"user_id": user_id, "read": False},
+        {"$set": {"read": True}},
+    )

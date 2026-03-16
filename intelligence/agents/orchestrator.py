@@ -9,6 +9,7 @@ from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from agents.tools import TOOLS_OPENAI, execute_tool
 from agents.memory import ConversationMemory
 from rag.sync import ensure_synced
+from agents import monitor
 
 MAX_TOOL_ROUNDS = 5     # 最多工具调用轮次，防止无限循环
 
@@ -36,6 +37,8 @@ class Orchestrator:
         self.memory = ConversationMemory()
         # 启动后台 RAG 索引同步（MongoDB → ChromaDB）
         ensure_synced()
+        # 启动后台 Monitor Agent（告警监控）
+        monitor.start()
 
     def chat(self, user_message: str, on_tool_call=None) -> str:
         """
