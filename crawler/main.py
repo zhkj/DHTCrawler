@@ -5,7 +5,11 @@ DHT 爬虫启动入口
   N 个 DHTProtocol 节点（asyncio.DatagramProtocol）
     └─→ 共享 asyncio.Queue（info_hash 缓冲区）
            ├─→ drain_queue 协程 → 批量写入 MongoDB
-           └─→ metadata_worker 协程 → 抓取种子元数据
+           │     ├─→ 有 peer 的 item → metadata_queue → BEP-9 抓取元数据
+           │     └─→ 无 peer 的 item → tracker_queue  → Tracker 反查 peer → metadata_queue
+           └─→ BEP-51 sample_infohashes → 主动发现 info_hash
+                 ├─→ active get_peers → peer → info_hash_queue → metadata_queue
+                 └─→ tracker_queue → Tracker 反查 peer → metadata_queue
 
 全程单线程事件循环，无锁竞争（除路由表的 asyncio.Lock）。
 """
@@ -13,7 +17,10 @@ import asyncio
 import logging
 import signal
 
-from crawler.config import NODE_NUM, DHT_PORT, SAVE_INTERVAL, STATS_INTERVAL, BOOTSTRAP_NODES
+from crawler.config import (
+    NODE_NUM, DHT_PORT, SAVE_INTERVAL, STATS_INTERVAL,
+    BOOTSTRAP_NODES, METADATA_CONCURRENCY, TRACKER_CONCURRENCY,
+)
 from crawler.dht.protocol import DHTProtocol, QUEUE_MAXSIZE
 from crawler.dht.routing_table import RoutingTable
 from crawler.dht.utils import generate_node_id, hex_to_bytes
@@ -21,6 +28,7 @@ from crawler.storage.mongodb import (
     drain_queue, save_routing_table, load_routing_tables,
 )
 from crawler.metadata.fetcher import metadata_worker
+from crawler.tracker.worker import tracker_worker
 
 import os
 
@@ -52,28 +60,37 @@ async def _periodic_save(node_id: bytes, routing_table: RoutingTable, port: int)
         logger.info(f"节点 {node_id.hex()[:8]}... 路由表已保存，节点数: {size}")
 
 
-async def _periodic_stats(protocols: list["DHTProtocol"], queue: asyncio.Queue):
+async def _periodic_stats(
+    protocols: list["DHTProtocol"],
+    queue: asyncio.Queue,
+    metadata_queue: asyncio.Queue,
+    tracker_queue: asyncio.Queue,
+):
     """周期性打印性能统计：吞吐量、队列水位、路由表大小"""
     while True:
         await asyncio.sleep(STATS_INTERVAL)
-        total_recv = total_sent = total_hashes = total_evicted = 0
+        total_recv = total_sent = total_hashes = total_evicted = total_samples = 0
         for proto in protocols:
             s = proto.get_stats()
             total_recv    += s["msgs_recv"]
             total_sent    += s["msgs_sent"]
             total_hashes  += s["hashes_enqueued"]
             total_evicted += s["nodes_evicted"]
+            total_samples += s["samples_found"]
             rt_size = await proto.routing_table.size()
             logger.info(
-                "[节点 %s] recv=%d sent=%d hashes=%d(%.2f/s) evicted=%d rt_size=%d",
+                "[节点 %s] recv=%d sent=%d hashes=%d(%.2f/s) samples=%d evicted=%d rt=%d",
                 s["node_id"], s["msgs_recv"], s["msgs_sent"],
                 s["hashes_enqueued"], s["hash_per_s"],
-                s["nodes_evicted"], rt_size,
+                s["samples_found"], s["nodes_evicted"], rt_size,
             )
         logger.info(
-            "[汇总] recv=%d sent=%d hashes=%d evicted=%d queue=%d/%d",
-            total_recv, total_sent, total_hashes, total_evicted,
+            "[汇总] recv=%d sent=%d hashes=%d samples=%d evicted=%d "
+            "queue=%d/%d meta_q=%d/%d tracker_q=%d/%d",
+            total_recv, total_sent, total_hashes, total_samples, total_evicted,
             queue.qsize(), queue.maxsize,
+            metadata_queue.qsize(), metadata_queue.maxsize,
+            tracker_queue.qsize(), tracker_queue.maxsize,
         )
 
 
@@ -82,9 +99,10 @@ async def create_node(
     routing_table: RoutingTable,
     port: int,
     queue: asyncio.Queue,
+    tracker_queue: asyncio.Queue,
 ) -> tuple[asyncio.DatagramTransport, DHTProtocol]:
     loop = asyncio.get_running_loop()
-    protocol = DHTProtocol(node_id, routing_table, queue)
+    protocol = DHTProtocol(node_id, routing_table, queue, tracker_queue)
     transport, _ = await loop.create_datagram_endpoint(
         lambda: protocol,
         local_addr=("0.0.0.0", port),
@@ -99,6 +117,12 @@ async def main():
 
     # 共享队列：所有节点的 info_hash 都进入同一个队列
     queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+
+    # 元数据抓取队列（带 peer 地址的 item）
+    metadata_queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE * 2)
+
+    # Tracker 反查队列（无 peer 的 info_hash → Tracker 查 peer → metadata_queue）
+    tracker_queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 
     transports: list[asyncio.DatagramTransport] = []
     protocols:  list[DHTProtocol] = []
@@ -118,7 +142,7 @@ async def main():
             routing_table = RoutingTable(node_id)
             logger.info(f"节点 {i} 新建: {node_id.hex()[:8]}...")
 
-        transport, protocol = await create_node(node_id, routing_table, port, queue)
+        transport, protocol = await create_node(node_id, routing_table, port, queue, tracker_queue)
         transports.append(transport)
         protocols.append(protocol)
 
@@ -126,19 +150,23 @@ async def main():
             _periodic_save(node_id, routing_table, port)
         ))
 
-    # 元数据抓取独立队列（drain_queue 写完 MongoDB 后转发 announce_peer 到此队列）
-    metadata_queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+    # 后台任务：消费队列 → 写入 MongoDB → 分发到 metadata_queue / tracker_queue
+    drain_task = asyncio.create_task(drain_queue(queue, metadata_queue, tracker_queue))
 
-    # 后台任务：消费队列 → 写入 MongoDB → 转发 announce_peer 到 metadata_queue
-    drain_task = asyncio.create_task(drain_queue(queue, metadata_queue))
-
-    # 后台任务：从 metadata_queue 抓取种子元数据
+    # 后台任务：从 metadata_queue 抓取种子元数据（BEP-9）
     fetch_task = asyncio.create_task(metadata_worker(metadata_queue))
 
-    # 后台任务：性能统计日志
-    stats_task = asyncio.create_task(_periodic_stats(protocols, queue))
+    # 后台任务：Tracker 反查 → 找到 peer → 送入 metadata_queue
+    tracker_task = asyncio.create_task(tracker_worker(tracker_queue, metadata_queue))
 
-    logger.info(f"DHT 爬虫启动，{NODE_NUM} 个节点，端口 {DHT_PORT}-{DHT_PORT + NODE_NUM - 1}")
+    # 后台任务：性能统计日志
+    stats_task = asyncio.create_task(_periodic_stats(protocols, queue, metadata_queue, tracker_queue))
+
+    logger.info(
+        "DHT 爬虫启动，%d 个节点，端口 %d-%d，元数据并发: %d，Tracker 并发: %d",
+        NODE_NUM, DHT_PORT, DHT_PORT + NODE_NUM - 1,
+        METADATA_CONCURRENCY, TRACKER_CONCURRENCY,
+    )
     logger.info("按 Ctrl+C 优雅退出")
 
     # 等待退出信号
@@ -153,6 +181,7 @@ async def main():
     logger.info("正在关闭...")
     drain_task.cancel()
     fetch_task.cancel()
+    tracker_task.cancel()
     stats_task.cancel()
     for task in save_tasks:
         task.cancel()

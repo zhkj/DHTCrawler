@@ -35,12 +35,14 @@ def _db():
 async def drain_queue(
     queue: asyncio.Queue,
     metadata_queue: asyncio.Queue | None = None,
+    tracker_queue: asyncio.Queue | None = None,
     batch_size: int = 200,
     interval: float = 5.0,
 ):
     """
     持续消费 info_hash 队列，批量写入 MongoDB。
-    若传入 metadata_queue，则将 announce_peer 的 item 转发给元数据抓取 worker。
+    - 带 peer 的 item → metadata_queue（BEP-9 抓取）
+    - 不带 peer 的 get_peers item → tracker_queue（Tracker 反查 peer）
     """
     while True:
         batch = []
@@ -59,12 +61,19 @@ async def drain_queue(
 
         if batch:
             await asyncio.to_thread(_write_info_hashs, batch)
-            # 将 announce_peer 转发到元数据抓取队列
-            if metadata_queue is not None:
-                for item in batch:
-                    if item.get("source") == "announce_peer":
+            for item in batch:
+                if item.get("peer"):
+                    # 有 peer 地址 → 直接 BEP-9 抓取
+                    if metadata_queue is not None:
                         try:
                             metadata_queue.put_nowait(item)
+                        except asyncio.QueueFull:
+                            pass
+                else:
+                    # 没有 peer（如被动 get_peers）→ Tracker 反查
+                    if tracker_queue is not None:
+                        try:
+                            tracker_queue.put_nowait(item)
                         except asyncio.QueueFull:
                             pass
 

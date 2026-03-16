@@ -1,16 +1,55 @@
 # DHTCrawler
 
-一个基于 BitTorrent DHT 协议的 Python 爬虫，通过伪装成 DHT 节点被动监听网络中的 `info_hash`，再获取对应的种子元数据。
+基于 BitTorrent DHT 协议的 Python 3 爬虫。通过被动监听 + BEP-51 主动采集 + UDP Tracker 反查，三管齐下获取 `info_hash` 并通过 BEP-9 抓取种子元数据。
 
 ---
 
 ## 功能
 
-- **DHT 网络嗅探**：伪装成合法 DHT 节点，加入 BitTorrent DHT 网络，被动收集其他节点广播的 `info_hash`
-- **双渠道采集**：同时捕获 `announce_peer`（节点宣布下载某 torrent）和 `get_peers`（节点查询某 torrent 的 peers）两类消息中的 `info_hash`
-- **路由表持久化**：将 DHT 路由表存储到 MongoDB，重启后可恢复节点状态，无需重新 bootstrap
-- **种子元数据解析**：根据收集到的 `info_hash`，从外部 torrent 缓存服务下载 `.torrent` 文件，解析出种子名称、文件列表、文件大小、磁力链接等信息
-- **多节点并发**：支持同时运行多个 DHT 节点，提高 `info_hash` 采集速度
+- **被动采集**：伪装成 DHT 节点，捕获 `announce_peer`（节点宣布下载）和 `get_peers`（节点查询 peers）中的 `info_hash`
+- **BEP-51 主动采集**：向 DHT 节点发送 `sample_infohashes` 请求，批量获取 `info_hash`，再通过主动 `get_peers` 查找在线 peer
+- **UDP Tracker 反查**：对无 peer 的 `info_hash`，向公共 UDP Tracker 查询 peer 列表，补充 BEP-9 抓取来源
+- **BEP-9 元数据抓取**：直接从 peer 的 TCP 连接获取种子元数据（文件名、大小、文件列表），无需依赖第三方 HTTP 缓存
+- **路由表持久化**：路由表存储到 MongoDB，重启后恢复节点状态，跳过 bootstrap 冷启动
+- **多节点并发**：支持同时运行多个 DHT 节点（默认 8 个），提高采集覆盖面
+- **Intelligence Agent**：基于 Claude API 的智能查询层，支持自然语言搜索种子、统计分析等
+
+---
+
+## 架构
+
+```
+                      DHT 网络
+                         │
+      ┌──────────────────┼──────────────────┐
+      │                  │                  │
+   被动接收           被动接收        BEP-51 主动采集
+   get_peers       announce_peer    sample_infohashes
+   (hash, 无peer)  (hash + peer)    (批量 hash)
+      │                  │                  │
+      │                  │          ┌───────┴───────┐
+      │                  │          │               │
+      │                  │   active get_peers    tracker_queue
+      │                  │   (DHT 查 peer)          │
+      │                  │          │               │
+      ▼                  ▼          ▼               ▼
+    ┌────────── info_hash_queue ─────────┐    UDP Tracker
+    │           drain_queue              │    反查 peer
+    │        (批量写入 MongoDB)          │        │
+    └──────┬─────────────┬───────────────┘        │
+           │             │                        │
+       有 peer        无 peer                     │
+           │             │                        │
+           │       tracker_queue ◄────────────────┘
+           │             │
+           ▼             ▼
+      metadata_queue ◄───┘
+           │
+     BEP-9 元数据抓取 (200 并发)
+           │
+           ▼
+     MongoDB bt_infos
+```
 
 ---
 
@@ -18,64 +57,30 @@
 
 ### 1. DHT 网络与 Kademlia 算法
 
-BitTorrent DHT 网络基于 **Kademlia** 分布式哈希表算法。网络中每个节点拥有一个 160 位的唯一 Node ID，节点之间的"距离"通过 **XOR 运算**计算：
+BitTorrent DHT 基于 **Kademlia** 分布式哈希表。每个节点拥有 160 位 Node ID，节点间距离通过 XOR 计算。路由表由 160 个 k-bucket 组成，爬虫模式下每个 bucket 容量放大到 1500（标准值为 8），以容纳更多节点。
 
-```
-distance(A, B) = A XOR B
-```
+### 2. 被动采集（KRPC 协议）
 
-每个节点维护一张**路由表（Routing Table）**，由 160 个 k-bucket 组成，第 `i` 个 bucket 存储与自身 XOR 距离在 `[2^i, 2^(i+1))` 范围内的节点信息（IP + 端口 + Node ID）。
-
-### 2. KRPC 协议
-
-DHT 节点间通过 **KRPC（Kademlia Remote Procedure Call）** 通信，使用 UDP 传输，消息以 **Bencode** 编码。共有四种消息类型：
-
-| 消息类型 | 方向 | 说明 |
+| 消息类型 | 说明 | 对爬虫的价值 |
 |---|---|---|
-| `ping` | 查询/响应 | 探测节点是否在线 |
-| `find_node` | 查询/响应 | 查找离目标 ID 最近的 K 个节点 |
-| `get_peers` | 查询/响应 | 查询拥有某 `info_hash` 的 peers |
-| `announce_peer` | 查询/响应 | 宣告自己正在下载某 `info_hash` 的 torrent |
+| `get_peers` | 其他节点查询某 info_hash 的 peer | 获取 info_hash（无可靠 peer 地址） |
+| `announce_peer` | 其他节点宣告正在下载 | 获取 info_hash + peer TCP 地址（高质量） |
 
-### 3. 爬虫工作流程
+**关键优化**：回复 `get_peers` 时伪装 Node ID（前 15 字节用 info_hash），让对方认为我们是"最近节点"，后续触发 `announce_peer` 回传。
 
-```
-Bootstrap 节点 (router.bittorrent.com 等)
-        │
-        ▼
-  发送 find_node 查询
-        │
-        ▼
-  获取邻近节点列表 ──────► 加入路由表
-        │                      │
-        │                      ▼
-        │              持续向路由表中的节点
-        │              发送 find_node，扩大路由表
-        │
-        ▼
-  被动接收其他节点的查询
-        │
-        ├── 收到 announce_peer ──► 提取 info_hash ──► 存入 MongoDB
-        │
-        └── 收到 get_peers    ──► 提取 info_hash ──► 存入 MongoDB
-```
+### 3. BEP-51 主动采集
 
-**关键设计**：爬虫不主动发起 `get_peers`，而是"混入"DHT 网络后，等待其他真实节点将查询/宣告消息发给自己，从而被动、低噪地采集 `info_hash`。
+周期性向路由表中的节点发送 `sample_infohashes` 请求，对方直接返回其存储的 info_hash 列表。拿到 hash 后：
+- 向 DHT 网络发送主动 `get_peers`，查找在线 peer
+- 同时投递到 Tracker 反查队列
 
-### 4. 种子元数据获取（bt.py）
+### 4. UDP Tracker 反查（BEP-15）
 
-拿到 `info_hash` 后，`bt.py` 依次尝试以下缓存服务获取 `.torrent` 文件：
+对无 peer 的 info_hash，向公共 UDP Tracker（opentrackr.org、openbittorrent.com 等）发送 announce 请求，获取 peer 列表，补充 BEP-9 抓取来源。
 
-1. `http://torcache.net/torrent/<BTIH>.torrent`
-2. `http://bt.box.n0808.com/<prefix>/<suffix>/<BTIH>.torrent`
+### 5. BEP-9 元数据抓取
 
-下载到 `.torrent` 文件后，通过 Bencode 解码提取：
-
-- 种子名称（`name`）
-- 文件列表（`files`）及各文件大小
-- 对应的磁力链接（`magnet:?xt=urn:btih:<BTIH>`）
-
-最终将元数据写入 MongoDB 的 `bt_infos` 集合。
+通过 TCP 连接 peer，完成 BT 握手 → 扩展握手（BEP-10）→ 请求 metadata 分片 → SHA1 校验 → bencode 解析，提取种子名称、文件列表、总大小等信息。
 
 ---
 
@@ -83,70 +88,87 @@ Bootstrap 节点 (router.bittorrent.com 等)
 
 ```
 DHTCrawler/
-├── dhtcrawler.py   # 入口：启动多个 DHT 节点
-├── node.py         # Node 类：封装节点 ID 和协议实例
-├── krpc.py         # 核心：KRPC 协议实现（路由表、消息处理、find_node 主动探测）
-├── bt.py           # 种子元数据解析：根据 info_hash 获取 .torrent 并解析
-├── dbconnect.py    # MongoDB 数据访问层
-├── utility.py      # 工具函数：节点 ID 生成、XOR 距离、节点编解码
-└── config.py       # 配置：节点数量、Bootstrap 节点、MongoDB 地址
+├── crawler/
+│   ├── main.py                 # 启动入口：事件循环、队列编排、信号处理
+│   ├── config.py               # 配置：节点数、端口、超时、Tracker 列表等
+│   ├── dht/
+│   │   ├── protocol.py         # KRPC 协议：被动响应 + BEP-51 主动采集 + 主动 get_peers
+│   │   ├── routing_table.py    # Kademlia 路由表（asyncio.Lock 保护）
+│   │   └── utils.py            # 工具函数：ID 生成、XOR 距离、节点编解码
+│   ├── metadata/
+│   │   ├── fetcher.py          # 元数据抓取 worker：去重、多 peer 重试、并发控制
+│   │   └── bep9.py             # BEP-9 协议实现：TCP 握手、分片请求、SHA1 校验
+│   ├── tracker/
+│   │   ├── udp_tracker.py      # UDP Tracker 客户端（BEP-15）：connect + announce
+│   │   └── worker.py           # Tracker 反查 worker：查询 peer → 投递 metadata_queue
+│   └── storage/
+│       └── mongodb.py          # MongoDB 存储层：批量写入、路由表持久化
+├── intelligence/               # 智能查询层（Claude API Agent）
+│   ├── app.py                  # FastAPI 入口
+│   ├── agents/                 # Agent 编排、工具定义
+│   ├── db/                     # 数据库查询封装
+│   └── rag/                    # 向量检索
+├── logs/                       # 运行日志
+└── .env                        # 环境变量配置
 ```
 
 ---
 
 ## 数据库结构（MongoDB）
 
-数据库名：`dhtcrawler`
+数据库名：`dht`
 
 | Collection | 说明 |
 |---|---|
-| `info_hashs` | 从 `announce_peer` 收集的 info_hash（含时间戳）|
-| `get_peer_info_hashs` | 从 `get_peers` 收集的 info_hash（含时间戳）|
+| `info_hashs` | 采集到的 info_hash 记录（来源、时间戳） |
 | `rtables` | 各节点路由表快照，用于重启恢复 |
-| `bt_infos` | 解析后的种子元数据（名称、文件列表、磁力链接）|
+| `bt_infos` | 解析后的种子元数据（名称、文件列表、大小、磁力链接） |
 
 ---
 
 ## 依赖
 
-- Python 2.x
-- [bencode](https://pypi.org/project/bencode/) — Bencode 编解码
+- Python 3.11+
+- [bencodepy](https://pypi.org/project/bencodepy/) — Bencode 编解码
 - [pymongo](https://pypi.org/project/pymongo/) — MongoDB 驱动
-- MongoDB（本地默认端口 `27017`）
+- [python-dotenv](https://pypi.org/project/python-dotenv/) — 环境变量加载
+- MongoDB 服务
 
 安装依赖：
 
 ```bash
-pip install bencode pymongo
+pip install bencodepy pymongo python-dotenv
 ```
 
 ---
 
 ## 使用方法
 
-**第一步：启动 DHT 爬虫节点，收集 info_hash**
-
 ```bash
-python dhtcrawler.py
+# 启动 MongoDB
+mongod --dbpath /usr/local/var/mongodb --fork --logpath /usr/local/var/log/mongodb/mongo.log
+
+# 启动爬虫（采集 info_hash + 抓取元数据，一步完成）
+python3 -m crawler.main
 ```
-
-节点启动后会自动 bootstrap 并持续运行，采集到的 `info_hash` 写入 MongoDB。
-
-**第二步：解析种子元数据**
-
-```bash
-python bt.py
-```
-
-读取 MongoDB 中的 `info_hash`，从外部服务获取 `.torrent` 文件并解析，结果存入 `bt_infos` 集合。
 
 ---
 
-## 配置说明（config.py）
+## 配置说明（config.py / .env）
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `NODE_NUM` | `1` | 同时运行的 DHT 节点数量 |
-| `INITIAL_NODES` | BitTorrent 官方 Bootstrap 节点 | DHT 网络入口节点 |
-| `HOST` | `127.0.0.1` | MongoDB 地址 |
-| `PORT` | `27017` | MongoDB 端口 |
+| `DHT_NODE_NUM` | `8` | 并发 DHT 节点数 |
+| `DHT_PORT` | `6881` | 起始监听端口（多节点自动递增） |
+| `FIND_NODE_INTERVAL` | `1.0` | find_node 探测间隔（秒） |
+| `FIND_NODE_SAMPLE` | `200` | 每轮 find_node 采样节点数 |
+| `SAMPLE_INTERVAL` | `5.0` | BEP-51 sample_infohashes 间隔（秒） |
+| `SAMPLE_BATCH` | `50` | 每轮 BEP-51 采样节点数 |
+| `METADATA_CONCURRENCY` | `200` | BEP-9 元数据抓取并发数 |
+| `FETCH_TIMEOUT` | `8` | BEP-9 / Tracker 请求超时（秒） |
+| `TRACKER_CONCURRENCY` | `50` | UDP Tracker 并发查询数 |
+| `NODE_MAX_AGE` | `900` | 节点最大存活时间（秒） |
+| `MONGO_HOST` | `127.0.0.1` | MongoDB 地址 |
+| `MONGO_PORT` | `27017` | MongoDB 端口 |
+
+所有参数均可通过 `.env` 文件或环境变量覆盖。
