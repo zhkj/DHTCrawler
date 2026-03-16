@@ -6,9 +6,10 @@ _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_root, ".env"))
 load_dotenv()  # fallback：intelligence/.env（如果有的话）
 
-# LLM
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-LLM_MODEL = "claude-haiku-4-5-20251001"  # 快且便宜，适合开发阶段
+# LLM（使用通义千问 OpenAI 兼容接口）
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5-flash")
 
 # MongoDB（复用爬虫数据库）
 MONGO_HOST = os.getenv("MONGO_HOST", "127.0.0.1")

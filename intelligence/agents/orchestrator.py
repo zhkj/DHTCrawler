@@ -1,11 +1,14 @@
 """
 Orchestrator Agent — 核心 ReAct 循环
-思路：接收用户消息 → 让 Claude 决定调用哪些工具 → 执行工具 → 返回结果 → 循环直到 Claude 给出最终回复
+使用 OpenAI 兼容接口（支持通义千问等国产大模型）
+思路：接收用户消息 → LLM 决定调用哪些工具 → 执行工具 → 返回结果 → 循环直到给出最终回复
 """
-import anthropic
-from config import ANTHROPIC_API_KEY, LLM_MODEL
-from agents.tools import TOOLS, execute_tool
+import json
+from openai import OpenAI, BadRequestError
+from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from agents.tools import TOOLS_OPENAI, execute_tool
 from agents.memory import ConversationMemory
+from rag.sync import ensure_synced
 
 MAX_TOOL_ROUNDS = 5     # 最多工具调用轮次，防止无限循环
 
@@ -29,8 +32,10 @@ SYSTEM_PROMPT = """你是一个 DHT 网络情报分析助手。你可以：
 class Orchestrator:
 
     def __init__(self):
-        self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        self._client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
         self.memory = ConversationMemory()
+        # 启动后台 RAG 索引同步（MongoDB → ChromaDB）
+        ensure_synced()
 
     def chat(self, user_message: str, on_tool_call=None) -> str:
         """
@@ -40,53 +45,70 @@ class Orchestrator:
         """
         self.memory.add("user", user_message)
 
-        for round_num in range(MAX_TOOL_ROUNDS):
-            response = self._client.messages.create(
-                model=LLM_MODEL,
-                max_tokens=2048,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=self.memory.get(),
-            )
+        _content_filtered = False
 
-            # Claude 给出最终文字回复（无工具调用）
-            if response.stop_reason == "end_turn":
-                final_text = response.content[0].text
+        for round_num in range(MAX_TOOL_ROUNDS):
+            try:
+                response = self._client.chat.completions.create(
+                    model=LLM_MODEL,
+                    max_tokens=2048,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        *self.memory.get(),
+                    ],
+                    tools=TOOLS_OPENAI,
+                    # 内容审核失败后禁止再调工具，强制直接回复
+                    tool_choice="none" if _content_filtered else "auto",
+                )
+            except BadRequestError as e:
+                # 通义千问内容审核拦截 — 清理最近的工具返回并重试
+                if "data_inspection_failed" in str(e):
+                    self._strip_last_tool_messages()
+                    _content_filtered = True
+                    continue
+                raise
+
+            msg = response.choices[0].message
+
+            # LLM 给出最终文字回复（无工具调用）
+            if not msg.tool_calls:
+                final_text = msg.content or ""
                 self.memory.add("assistant", final_text)
                 return final_text
 
-            # Claude 请求调用工具
-            if response.stop_reason == "tool_use":
-                # 把 Claude 的整个响应（含工具调用请求）加入消息历史
+            # LLM 请求调用工具
+            # 把 LLM 的响应（含工具调用请求）加入消息历史
+            self.memory.messages.append(msg.model_dump())
+
+            # 执行所有工具调用
+            for tool_call in msg.tool_calls:
+                func_name = tool_call.function.name
+                func_args = json.loads(tool_call.function.arguments)
+
+                result = execute_tool(func_name, func_args)
+
+                if on_tool_call:
+                    on_tool_call(func_name, func_args, result)
+
+                # 把工具结果返回给 LLM
                 self.memory.messages.append({
-                    "role": "assistant",
-                    "content": response.content,
-                })
-
-                # 执行所有工具调用（Claude 可能一次请求多个）
-                tool_results = []
-                for block in response.content:
-                    if block.type != "tool_use":
-                        continue
-
-                    result = execute_tool(block.name, block.input)
-
-                    if on_tool_call:
-                        on_tool_call(block.name, block.input, result)
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-
-                # 把工具结果返回给 Claude
-                self.memory.messages.append({
-                    "role": "user",
-                    "content": tool_results,
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result,
                 })
 
         return "抱歉，处理这个问题时遇到了困难，请换个方式描述。"
+
+    def _strip_last_tool_messages(self):
+        """移除最近一轮的 assistant(tool_calls) + tool 消息，避免内容审核循环触发。"""
+        # 从后往前找，移除 tool 消息和对应的 assistant 消息
+        while self.memory.messages and self.memory.messages[-1].get("role") == "tool":
+            self.memory.messages.pop()
+        # 移除触发工具调用的 assistant 消息
+        if self.memory.messages and self.memory.messages[-1].get("role") == "assistant":
+            self.memory.messages.pop()
+        # 加一条提示让 LLM 知道工具结果被过滤了
+        self.memory.add("user", "[系统提示] 上一轮工具返回的数据因包含敏感内容被过滤，请直接基于已有信息回答，或尝试其他查询方式。")
 
     def reset(self):
         """清空当前对话上下文。"""

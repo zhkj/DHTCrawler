@@ -3,8 +3,8 @@
 - 短期记忆：滑动窗口 + 摘要压缩（单次对话内）
 - 长期记忆：用户偏好和告警规则（跨对话，存 MongoDB）
 """
-import anthropic
-from config import ANTHROPIC_API_KEY, LLM_MODEL
+from openai import OpenAI
+from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from db.mongo_client import save_alert, get_alerts
 
 MAX_MESSAGES = 20       # 超过此数量触发压缩
@@ -18,7 +18,7 @@ class ConversationMemory:
 
     def __init__(self):
         self.messages: list[dict] = []
-        self._client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        self._client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
 
     def add(self, role: str, content: str):
         self.messages.append({"role": role, "content": content})
@@ -33,18 +33,23 @@ class ConversationMemory:
         old_messages = self.messages[:-KEEP_RECENT]
         recent_messages = self.messages[-KEEP_RECENT:]
 
-        history_text = "\n".join(
-            f"{m['role'].upper()}: {m['content']}" for m in old_messages
-        )
+        # 只提取文本消息做摘要，跳过工具调用消息
+        history_parts = []
+        for m in old_messages:
+            content = m.get("content", "")
+            if isinstance(content, str) and content:
+                history_parts.append(f"{m['role'].upper()}: {content}")
+        history_text = "\n".join(history_parts)
+
         summary_prompt = f"请用3-5句话概括以下对话的要点：\n\n{history_text}"
 
         try:
-            resp = self._client.messages.create(
+            resp = self._client.chat.completions.create(
                 model=LLM_MODEL,
                 max_tokens=300,
                 messages=[{"role": "user", "content": summary_prompt}],
             )
-            summary = resp.content[0].text
+            summary = resp.choices[0].message.content
         except Exception:
             summary = "（早期对话已压缩）"
 
