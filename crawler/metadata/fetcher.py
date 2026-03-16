@@ -30,6 +30,28 @@ logger = logging.getLogger(__name__)
 _seen_hashes: set[bytes] = set()
 _SEEN_MAX = 500_000  # 超过此数量时清空旧记录
 
+# bt_info 按来源统计（累计值，不重置）
+bt_info_stats: dict[str, int] = {
+    "passive": 0,   # 被动采集（announce_peer / get_peers → BEP-9）
+    "active": 0,    # 主动采集（BEP-51 → active_get_peers / tracker → BEP-9）
+    "total": 0,
+}
+# 上一次统计快照（用于计算周期增量）
+_bt_info_last: dict[str, int] = {"passive": 0, "active": 0, "total": 0}
+
+_PASSIVE_SOURCES = {"announce_peer", "get_peers"}
+_ACTIVE_SOURCES  = {"active_get_peers", "tracker"}
+
+
+def get_bt_info_stats() -> dict[str, int]:
+    """返回本周期的 bt_info 增量统计并更新快照"""
+    delta = {
+        k: bt_info_stats[k] - _bt_info_last[k]
+        for k in bt_info_stats
+    }
+    _bt_info_last.update(bt_info_stats)
+    return delta
+
 # 同一 info_hash 的多个 peer 排队
 _peer_map: dict[bytes, list[tuple[str, int]]] = collections.defaultdict(list)
 _MAX_PEERS_PER_HASH = 3  # 每个 info_hash 最多保留几个 peer
@@ -67,7 +89,7 @@ def _parse_raw_metadata(raw: bytes, info_hash: bytes) -> dict | None:
     return result
 
 
-async def fetch_and_save(info_hash: bytes, peers: list[tuple[str, int]]):
+async def fetch_and_save(info_hash: bytes, peers: list[tuple[str, int]], source: str = ""):
     """尝试从多个 peer 获取元数据，第一个成功即返回"""
     peer_id = generate_node_id()
     for peer_addr in peers:
@@ -78,7 +100,12 @@ async def fetch_and_save(info_hash: bytes, peers: list[tuple[str, int]]):
         metadata = _parse_raw_metadata(raw, info_hash)
         if metadata:
             await save_torrent_metadata(metadata)
-            logger.info("获取成功: %s", metadata["name"][:60])
+            bt_info_stats["total"] += 1
+            if source in _PASSIVE_SOURCES:
+                bt_info_stats["passive"] += 1
+            elif source in _ACTIVE_SOURCES:
+                bt_info_stats["active"] += 1
+            logger.info("获取成功 [%s]: %s", source, metadata["name"][:60])
             return
 
     logger.debug("BEP-9 所有 peer 均失败: %s (尝试 %d 个)", info_hash.hex()[:16], len(peers))
@@ -93,9 +120,9 @@ async def metadata_worker(metadata_queue: asyncio.Queue, concurrency: int = META
     global _seen_hashes
     semaphore = asyncio.Semaphore(concurrency)
 
-    async def _fetch_with_sem(info_hash: bytes, peers: list[tuple[str, int]]):
+    async def _fetch_with_sem(info_hash: bytes, peers: list[tuple[str, int]], source: str = ""):
         async with semaphore:
-            await fetch_and_save(info_hash, peers)
+            await fetch_and_save(info_hash, peers, source=source)
 
     pending: set[asyncio.Task] = set()
 
@@ -110,6 +137,7 @@ async def metadata_worker(metadata_queue: asyncio.Queue, concurrency: int = META
             continue
 
         info_hash = item["hash"]
+        source = item.get("source", "")
 
         # 已成功抓取过的跳过
         if info_hash in _seen_hashes:
@@ -147,7 +175,7 @@ async def metadata_worker(metadata_queue: asyncio.Queue, concurrency: int = META
             except asyncio.QueueFull:
                 pass
 
-        task = asyncio.create_task(_fetch_with_sem(info_hash, peers))
+        task = asyncio.create_task(_fetch_with_sem(info_hash, peers, source=source))
         pending.add(task)
         task.add_done_callback(pending.discard)
 

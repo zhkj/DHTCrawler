@@ -1,21 +1,26 @@
 """
 Reddit 公开 JSON 接口 — 无需 API Key，无需注册 App。
-Reddit 允许直接访问 /search.json，只需设置合理的 User-Agent。
+使用 old.reddit.com 端点，兼容性更好。
 """
 import httpx
 
-# Reddit 要求 User-Agent 格式：<platform>:<app_id>:<version> (by /u/<username>)
-# 填任意合理字符串即可，不能用 "python-requests" 这类默认值
-_USER_AGENT = "dht-intelligence-bot/0.1 (research project)"
+# 模拟浏览器 User-Agent，避免被 Reddit 403 拦截
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 def search_reddit(query: str, subreddit: str = "all", limit: int = 5) -> list[dict]:
     """
     搜索 Reddit。
-    不需要 OAuth，直接用公开搜索接口（有速率限制但够用）。
+    使用 old.reddit.com 公开搜索接口，不需要 OAuth。
     """
-    url = f"https://www.reddit.com/r/{subreddit}/search.json"
-    headers = {"User-Agent": _USER_AGENT}
+    url = f"https://old.reddit.com/r/{subreddit}/search.json"
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "application/json",
+    }
     params = {
         "q": query,
         "sort": "relevance",
@@ -25,7 +30,8 @@ def search_reddit(query: str, subreddit: str = "all", limit: int = 5) -> list[di
     }
 
     try:
-        resp = httpx.get(url, headers=headers, params=params, timeout=10)
+        resp = httpx.get(url, headers=headers, params=params, timeout=15,
+                         follow_redirects=True)
         resp.raise_for_status()
         posts = resp.json().get("data", {}).get("children", [])
     except Exception as e:

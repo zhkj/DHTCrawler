@@ -19,8 +19,8 @@ bdecode = _codec.decode
 
 from crawler.dht.routing_table import RoutingTable
 from crawler.dht.utils import (
-    generate_node_id, generate_token, generate_trans_id,
-    decode_nodes, encode_nodes, bytes_to_hex,
+    generate_node_id, generate_neighbor_target, generate_token,
+    generate_trans_id, decode_nodes, encode_nodes, bytes_to_hex,
 )
 from crawler.config import (
     BOOTSTRAP_NODES, FIND_NODE_INTERVAL, SAVE_INTERVAL,
@@ -67,6 +67,13 @@ class DHTProtocol(asyncio.DatagramProtocol):
         self._nodes_evicted:   int = 0
         self._samples_found:   int = 0
         self._stats_reset_at:  float = time.time()
+
+        # 按来源分类计数
+        self._source_counts: dict[str, int] = {
+            "get_peers": 0,
+            "announce_peer": 0,
+            "active_get_peers": 0,
+        }
 
     # ── asyncio.DatagramProtocol 回调 ────────────────────────────
 
@@ -276,7 +283,12 @@ class DHTProtocol(asyncio.DatagramProtocol):
                 # 采样发送，避免对大路由表进行广播风暴
                 sample = random.sample(nodes, min(FIND_NODE_SAMPLE, len(nodes)))
                 for _, addr in sample:
-                    self._find_node_to(generate_node_id(), addr)
+                    # 70% 发邻近 target（让更多节点记住我们），30% 随机 target（扩展路由表）
+                    if random.random() < 0.7:
+                        target = generate_neighbor_target(self.node_id)
+                    else:
+                        target = generate_node_id()
+                    self._find_node_to(target, addr)
                 size = await self.routing_table.size()
                 logger.info(f"节点 {self.node_id.hex()[:8]}... 路由表大小: {size}, find_node 发送: {len(sample)}")
             await asyncio.sleep(FIND_NODE_INTERVAL)
@@ -363,6 +375,8 @@ class DHTProtocol(asyncio.DatagramProtocol):
                 item["peer"] = peer
             self.queue.put_nowait(item)
             self._hashes_enqueued += 1
+            if source in self._source_counts:
+                self._source_counts[source] += 1
             logger.info("[%s] info_hash=%s peer=%s", source, info_hash.hex(), peer)
         except asyncio.QueueFull:
             logger.warning("info_hash 队列已满，丢弃数据（queue_size=%d）", self.queue.maxsize)
@@ -380,10 +394,13 @@ class DHTProtocol(asyncio.DatagramProtocol):
             "samples_found":   self._samples_found,
             "recv_per_s":      round(self._msgs_recv / max(elapsed, 1), 1),
             "hash_per_s":      round(self._hashes_enqueued / max(elapsed, 1), 2),
+            "source_counts":   dict(self._source_counts),
         }
         self._msgs_recv = self._msgs_sent = self._hashes_enqueued = 0
         self._nodes_evicted = 0
         self._samples_found = 0
+        for k in self._source_counts:
+            self._source_counts[k] = 0
         self._stats_reset_at = time.time()
         return stats
 

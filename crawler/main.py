@@ -23,11 +23,11 @@ from crawler.config import (
 )
 from crawler.dht.protocol import DHTProtocol, QUEUE_MAXSIZE
 from crawler.dht.routing_table import RoutingTable
-from crawler.dht.utils import generate_node_id, hex_to_bytes
+from crawler.dht.utils import generate_node_id, generate_distributed_id, hex_to_bytes
 from crawler.storage.mongodb import (
     drain_queue, save_routing_table, load_routing_tables,
 )
-from crawler.metadata.fetcher import metadata_worker
+from crawler.metadata.fetcher import metadata_worker, get_bt_info_stats
 from crawler.tracker.worker import tracker_worker
 
 import os
@@ -66,10 +66,11 @@ async def _periodic_stats(
     metadata_queue: asyncio.Queue,
     tracker_queue: asyncio.Queue,
 ):
-    """周期性打印性能统计：吞吐量、队列水位、路由表大小"""
+    """周期性打印性能统计：吞吐量、队列水位、路由表大小、按来源分类"""
     while True:
         await asyncio.sleep(STATS_INTERVAL)
         total_recv = total_sent = total_hashes = total_evicted = total_samples = 0
+        total_src = {"get_peers": 0, "announce_peer": 0, "active_get_peers": 0}
         for proto in protocols:
             s = proto.get_stats()
             total_recv    += s["msgs_recv"]
@@ -77,13 +78,26 @@ async def _periodic_stats(
             total_hashes  += s["hashes_enqueued"]
             total_evicted += s["nodes_evicted"]
             total_samples += s["samples_found"]
+            for k in total_src:
+                total_src[k] += s["source_counts"].get(k, 0)
             rt_size = await proto.routing_table.size()
+            sc = s["source_counts"]
             logger.info(
-                "[节点 %s] recv=%d sent=%d hashes=%d(%.2f/s) samples=%d evicted=%d rt=%d",
+                "[节点 %s] recv=%d sent=%d hashes=%d(%.2f/s) "
+                "[被动: get_peers=%d announce=%d | 主动: active_gp=%d] "
+                "samples=%d evicted=%d rt=%d",
                 s["node_id"], s["msgs_recv"], s["msgs_sent"],
                 s["hashes_enqueued"], s["hash_per_s"],
+                sc.get("get_peers", 0), sc.get("announce_peer", 0),
+                sc.get("active_get_peers", 0),
                 s["samples_found"], s["nodes_evicted"], rt_size,
             )
+
+        # bt_info 本周期增量
+        bt = get_bt_info_stats()
+        passive_hash = total_src["get_peers"] + total_src["announce_peer"]
+        active_hash = total_src["active_get_peers"]
+
         logger.info(
             "[汇总] recv=%d sent=%d hashes=%d samples=%d evicted=%d "
             "queue=%d/%d meta_q=%d/%d tracker_q=%d/%d",
@@ -91,6 +105,15 @@ async def _periodic_stats(
             queue.qsize(), queue.maxsize,
             metadata_queue.qsize(), metadata_queue.maxsize,
             tracker_queue.qsize(), tracker_queue.maxsize,
+        )
+        logger.info(
+            "[info_hash 来源] 被动=%d (get_peers=%d, announce=%d) | 主动=%d (active_gp=%d)",
+            passive_hash, total_src["get_peers"], total_src["announce_peer"],
+            active_hash, active_hash,
+        )
+        logger.info(
+            "[bt_info 来源] 本周期: 被动=%d 主动=%d 合计=%d",
+            bt["passive"], bt["active"], bt["total"],
         )
 
 
@@ -138,9 +161,9 @@ async def main():
             routing_table = RoutingTable.from_serializable(node_id, saved["rtable"])
             logger.info(f"节点 {i} 从历史恢复: {node_id.hex()[:8]}...")
         else:
-            node_id = generate_node_id()
+            node_id = generate_distributed_id(i, NODE_NUM)
             routing_table = RoutingTable(node_id)
-            logger.info(f"节点 {i} 新建: {node_id.hex()[:8]}...")
+            logger.info(f"节点 {i} 新建(均匀分布): {node_id.hex()[:8]}...")
 
         transport, protocol = await create_node(node_id, routing_table, port, queue, tracker_queue)
         transports.append(transport)
