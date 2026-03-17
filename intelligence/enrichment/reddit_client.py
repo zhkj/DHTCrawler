@@ -2,7 +2,10 @@
 Reddit 公开 JSON 接口 — 无需 API Key，无需注册 App。
 使用 old.reddit.com 端点，兼容性更好。
 """
+import logging
 import httpx
+
+logger = logging.getLogger("intelligence.enrichment.reddit")
 
 # 模拟浏览器 User-Agent，避免被 Reddit 403 拦截
 _USER_AGENT = (
@@ -35,7 +38,7 @@ def search_reddit(query: str, subreddit: str = "all", limit: int = 5) -> list[di
         resp.raise_for_status()
         posts = resp.json().get("data", {}).get("children", [])
     except Exception as e:
-        print(f"[Reddit] 请求失败: {e}")
+        logger.warning(f"请求失败: {e}")
         return []
 
     results = []

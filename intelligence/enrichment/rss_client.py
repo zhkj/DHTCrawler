@@ -3,10 +3,13 @@ RSS 新闻聚合 — 完全免费，无需 API Key
 支持中英文模糊匹配（OR 逻辑 + 按相关度排序）
 """
 import re
+import logging
 from difflib import SequenceMatcher
 
 import feedparser
 import httpx
+
+logger = logging.getLogger("intelligence.enrichment.rss")
 
 
 # 科技新闻源（可自由增减）
@@ -75,7 +78,7 @@ def search_rss(query: str, sources: list[str] = None, limit: int = 5) -> list[di
             resp.raise_for_status()
             feed = feedparser.parse(resp.text)
         except Exception as e:
-            print(f"[RSS] {source_name} 解析失败: {e}")
+            logger.warning(f"{source_name} 解析失败: {e}")
             continue
 
         for entry in feed.entries:

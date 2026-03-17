@@ -1,9 +1,12 @@
 """
 RAG 模块：向量化存储 + 语义检索
 """
+import logging
 import chromadb
 from sentence_transformers import SentenceTransformer
 from config import CHROMA_PATH, CHROMA_COLLECTION, EMBED_MODEL
+
+logger = logging.getLogger("intelligence.rag")
 
 
 # 单例，避免重复加载模型（模型文件较大）
@@ -15,7 +18,7 @@ _collection = None
 def _get_embed_model():
     global _embed_model
     if _embed_model is None:
-        print(f"[RAG] 加载 Embedding 模型: {EMBED_MODEL}")
+        logger.info(f"加载 Embedding 模型: {EMBED_MODEL}")
         _embed_model = SentenceTransformer(EMBED_MODEL)
     return _embed_model
 
@@ -67,12 +70,12 @@ def index_torrents(torrents: list[dict]):
         })
 
     if not texts:
-        print("[RAG] 无新数据需要索引")
+        logger.debug("无新数据需要索引")
         return
 
     embeddings = model.encode(texts).tolist()
     collection.add(embeddings=embeddings, ids=ids, metadatas=metadatas, documents=texts)
-    print(f"[RAG] 已索引 {len(texts)} 条记录")
+    logger.info(f"已索引 {len(texts)} 条记录")
 
 
 def search(query: str, top_k: int = 5) -> list[dict]:

@@ -2,9 +2,11 @@
 HackerNews Algolia API — 完全免费，无需 API Key
 文档：https://hn.algolia.com/api
 """
+import logging
 import httpx
 from datetime import datetime, timedelta
 
+logger = logging.getLogger("intelligence.enrichment.hn")
 
 HN_API = "https://hn.algolia.com/api/v1"
 
@@ -27,7 +29,7 @@ def search_hackernews(query: str, days: int = 7, limit: int = 5) -> list[dict]:
         resp.raise_for_status()
         hits = resp.json().get("hits", [])
     except Exception as e:
-        print(f"[HN] 请求失败: {e}")
+        logger.warning(f"请求失败: {e}")
         return []
 
     results = []

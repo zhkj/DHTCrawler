@@ -91,3 +91,123 @@ def mark_alerts_read(user_id: str):
         {"user_id": user_id, "read": False},
         {"$set": {"read": True}},
     )
+
+
+# ── Human-in-the-Loop: 待审批告警 ──────────────────────────────────
+
+def get_pending_alerts(limit: int = 50) -> list[dict]:
+    """获取待人工审批的告警。"""
+    db = get_db()
+    return list(
+        db.alerts_log.find(
+            {"status": "pending_review"},
+            {"_id": 0},
+        ).sort("triggered_at", -1).limit(limit)
+    )
+
+
+def approve_alert(info_hash: str, user_id: str = "__system__"):
+    """审批通过告警，触发正式推送。"""
+    db = get_db()
+    db.alerts_log.update_one(
+        {"info_hash": info_hash, "user_id": user_id, "status": "pending_review"},
+        {"$set": {"status": "approved", "read": False}},
+    )
+
+
+def reject_alert(info_hash: str, user_id: str = "__system__", reason: str = ""):
+    """拒绝告警（误报），记录反馈。"""
+    db = get_db()
+    db.alerts_log.update_one(
+        {"info_hash": info_hash, "user_id": user_id, "status": "pending_review"},
+        {"$set": {"status": "rejected", "reject_reason": reason, "read": True}},
+    )
+
+
+def save_false_positive(keyword: str, info_hash: str, reason: str = ""):
+    """记录误报关键词，用于后续优化匹配规则。"""
+    db = get_db()
+    db.false_positives.update_one(
+        {"keyword": keyword},
+        {"$inc": {"count": 1},
+         "$push": {"examples": {"info_hash": info_hash, "reason": reason}},
+         "$set": {"keyword": keyword}},
+        upsert=True,
+    )
+
+
+def get_false_positives() -> list[dict]:
+    """获取所有被标记为误报的关键词统计。"""
+    db = get_db()
+    return list(db.false_positives.find({}, {"_id": 0}).sort("count", -1))
+
+
+# ── 长期记忆: 对话摘要存储 ─────────────────────────────────────────
+
+def save_conversation_summary(user_id: str, summary: str, topics: list[str]):
+    """保存对话摘要到长期记忆。"""
+    from datetime import datetime
+    db = get_db()
+    db.memory_conversations.insert_one({
+        "user_id": user_id,
+        "summary": summary,
+        "topics": topics,
+        "created_at": datetime.now(),
+    })
+
+
+def get_conversation_summaries(user_id: str, limit: int = 20) -> list[dict]:
+    """获取用户的历史对话摘要。"""
+    db = get_db()
+    return list(
+        db.memory_conversations.find(
+            {"user_id": user_id}, {"_id": 0}
+        ).sort("created_at", -1).limit(limit)
+    )
+
+
+def save_user_profile(user_id: str, profile: dict):
+    """保存/更新用户画像（关注领域、偏好等）。"""
+    db = get_db()
+    db.user_profiles.update_one(
+        {"user_id": user_id},
+        {"$set": profile},
+        upsert=True,
+    )
+
+
+def get_user_profile(user_id: str) -> dict:
+    """获取用户画像。"""
+    db = get_db()
+    doc = db.user_profiles.find_one({"user_id": user_id}, {"_id": 0})
+    return doc or {}
+
+
+# ── 可观测性: Trace 存储 ───────────────────────────────────────────
+
+def save_trace(trace: dict):
+    """保存一次 Agent 调用的完整 trace。"""
+    db = get_db()
+    db.traces.insert_one(trace)
+
+
+def get_traces(limit: int = 50) -> list[dict]:
+    """获取最近的 trace 记录。"""
+    db = get_db()
+    return list(
+        db.traces.find({}, {"_id": 0}).sort("start_time", -1).limit(limit)
+    )
+
+
+def save_evaluation(evaluation: dict):
+    """保存 LLM-as-judge 评估结果。"""
+    db = get_db()
+    db.evaluations.insert_one(evaluation)
+
+
+def get_evaluations(limit: int = 50) -> list[dict]:
+    """获取最近的评估记录。"""
+    db = get_db()
+    return list(
+        db.evaluations.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)
+    )

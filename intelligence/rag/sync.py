@@ -10,7 +10,7 @@ import logging
 from db.mongo_client import get_recent_torrents, get_db
 from rag.vectorstore import index_torrents, _get_collection
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("intelligence.rag.sync")
 
 # 默认同步间隔（秒）
 _DEFAULT_INTERVAL = 120
