@@ -15,6 +15,9 @@ dependencies = [
     # Intelligence - RAG
     "chromadb>=0.5.0",
     "sentence-transformers>=3.0.0",
+    "rank-bm25>=0.2.2",
+    # Intelligence - Guardrails
+    "pydantic>=2.0.0",
     # Intelligence - Enrichment
     "feedparser>=6.0.0",
     # Intelligence - Web UI

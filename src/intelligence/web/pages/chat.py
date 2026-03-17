@@ -1,4 +1,4 @@
-"""聊天页面。"""
+"""聊天页面 — 支持 Streaming 流式输出 + 工具调用状态实时推送。"""
 import streamlit as st
 
 
@@ -19,7 +19,6 @@ def render():
 
         with st.chat_message("assistant"):
             tool_placeholder = st.empty()
-            response_placeholder = st.empty()
             tool_log_lines = []
 
             def on_tool_call(name, inputs, result):
@@ -27,14 +26,17 @@ def render():
                 tool_log_lines.append(f"🔧 **{name}** (`{query_str[:60]}`)")
                 tool_placeholder.markdown("\n".join(tool_log_lines))
 
-            with st.spinner("分析中..."):
-                reply = st.session_state.agent.chat(user_input, on_tool_call=on_tool_call)
+            # Streaming: 逐 token 流式渲染
+            reply = st.write_stream(
+                st.session_state.agent.chat_stream(
+                    user_input, on_tool_call=on_tool_call,
+                )
+            )
 
+            # 工具调用日志折叠展示
             tool_placeholder.empty()
             if tool_log_lines:
                 with st.expander(f"查看工具调用过程（共 {len(tool_log_lines)} 次）"):
                     st.markdown("\n".join(tool_log_lines))
-
-            response_placeholder.markdown(reply)
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
