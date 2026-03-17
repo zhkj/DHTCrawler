@@ -88,28 +88,79 @@ BitTorrent DHT 基于 **Kademlia** 分布式哈希表。每个节点拥有 160 �
 
 ```
 DHTCrawler/
-├── crawler/
-│   ├── main.py                 # 启动入口：事件循环、队列编排、信号处理
-│   ├── config.py               # 配置：节点数、端口、超时、Tracker 列表等
-│   ├── dht/
-│   │   ├── protocol.py         # KRPC 协议：被动响应 + BEP-51 主动采集 + 主动 get_peers
-│   │   ├── routing_table.py    # Kademlia 路由表（asyncio.Lock 保护）
-│   │   └── utils.py            # 工具函数：ID 生成、XOR 距离、节点编解码
-│   ├── metadata/
-│   │   ├── fetcher.py          # 元数据抓取 worker：去重、多 peer 重试、并发控制
-│   │   └── bep9.py             # BEP-9 协议实现：TCP 握手、分片请求、SHA1 校验
-│   ├── tracker/
-│   │   ├── udp_tracker.py      # UDP Tracker 客户端（BEP-15）：connect + announce
-│   │   └── worker.py           # Tracker 反查 worker：查询 peer → 投递 metadata_queue
-│   └── storage/
-│       └── mongodb.py          # MongoDB 存储层：批量写入、路由表持久化
-├── intelligence/               # 智能查询层（Claude API Agent）
-│   ├── app.py                  # FastAPI 入口
-│   ├── agents/                 # Agent 编排、工具定义
-│   ├── db/                     # 数据库查询封装
-│   └── rag/                    # 向量检索
-├── logs/                       # 运行日志
-└── .env                        # 环境变量配置
+├── src/
+│   ├── crawler/                        # DHT 爬虫（数据采集层）
+│   │   ├── main.py                     # 启动入口：事件循环、队列编排、信号处理
+│   │   ├── config.py                   # 配置：节点数、端口、超时、Tracker 列表等
+│   │   ├── dht/
+│   │   │   ├── protocol.py             # KRPC 协议：被动响应 + BEP-51 主动采集 + 主动 get_peers
+│   │   │   ├── routing_table.py        # Kademlia 路由表（asyncio.Lock 保护）
+│   │   │   └── utils.py               # 工具函数：ID 生成、XOR 距离、节点编解码
+│   │   ├── metadata/
+│   │   │   ├── fetcher.py              # 元数据抓取 worker：去重、多 peer 重试、并发控制
+│   │   │   └── bep9.py                 # BEP-9 协议实现：TCP 握手、分片请求、SHA1 校验
+│   │   ├── tracker/
+│   │   │   ├── udp_tracker.py          # UDP Tracker 客户端（BEP-15）：connect + announce
+│   │   │   └── worker.py              # Tracker 反查 worker：查询 peer → 投递 metadata_queue
+│   │   └── storage/
+│   │       └── mongodb.py              # MongoDB 存储层：批量写入、路由表持久化
+│   └── intelligence/                   # 智能分析层（Agent 平台）
+│       ├── config.py                   # Intelligence 配置
+│       ├── core/
+│       │   ├── orchestrator.py         # Orchestrator Agent：意图识别、任务分发、结果聚合
+│       │   ├── tools.py                # Agent 工具集：搜索、统计、告警等
+│       │   └── memory/
+│       │       ├── conversation.py     # 短期记忆：滑动窗口 + 摘要压缩
+│       │       ├── long_term.py        # 长期记忆：用户偏好、历史查询
+│       │       └── preferences.py      # 用户偏好管理
+│       ├── db/
+│       │   ├── client.py               # MongoDB 客户端封装
+│       │   ├── repo_torrent.py         # 种子数据仓库
+│       │   ├── repo_alert.py           # 告警规则仓库
+│       │   ├── repo_memory.py          # 长期记忆仓库
+│       │   └── repo_trace.py           # 链路追踪数据仓库
+│       ├── enrichment/                 # 外部数据源补全
+│       │   ├── hackernews.py           # HackerNews Algolia API
+│       │   ├── reddit.py               # Reddit API
+│       │   └── rss.py                  # RSS 订阅源
+│       ├── monitor/
+│       │   ├── agent.py                # Monitor Agent：后台监听 + 告警触发
+│       │   ├── confidence.py           # 置信度评分
+│       │   └── hitl.py                 # Human-in-the-Loop 审查流程
+│       ├── notify/                     # 多渠道通知
+│       │   ├── dispatcher.py           # 通知分发器
+│       │   ├── dingtalk.py             # 钉钉通知
+│       │   ├── feishu.py               # 飞书通知
+│       │   └── telegram.py             # Telegram 通知
+│       ├── observability/              # 可观测性
+│       │   ├── tracer.py               # 链路追踪（TraceID 贯穿 Agent 调用链）
+│       │   └── evaluator.py            # LLM-as-Judge 评估器
+│       ├── rag/
+│       │   ├── vectorstore.py          # ChromaDB 向量存储
+│       │   └── sync.py                 # MongoDB → Vector DB 数据同步
+│       └── web/
+│           ├── app.py                  # Streamlit 入口
+│           └── pages/
+│               ├── chat.py             # 对话页面
+│               ├── hitl.py             # Human-in-the-Loop 审查页面
+│               └── observability.py    # 可观测性仪表盘
+├── tests/
+│   ├── unit/                           # 单元测试
+│   │   ├── test_confidence.py
+│   │   ├── test_memory.py
+│   │   └── test_tools.py
+│   └── integration/                    # 集成测试
+│       └── test_orchestrator.py
+├── scripts/
+│   ├── run_crawler.sh                  # 爬虫启动脚本
+│   └── run_web.sh                      # Web UI 启动脚本
+├── docs/
+│   ├── architecture.md                 # Agent 架构设计文档
+│   └── system_design.md                # 融合情报系统设计文档
+├── logs/                               # 运行日志
+├── pyproject.toml                      # 项目配置（依赖、构建、lint、测试）
+├── Makefile                            # 常用命令快捷入口
+└── .env                                # 环境变量配置
 ```
 
 ---
@@ -129,27 +180,49 @@ DHTCrawler/
 ## 依赖
 
 - Python 3.11+
-- [bencodepy](https://pypi.org/project/bencodepy/) — Bencode 编解码
-- [pymongo](https://pypi.org/project/pymongo/) — MongoDB 驱动
-- [python-dotenv](https://pypi.org/project/python-dotenv/) — 环境变量加载
 - MongoDB 服务
+- 主要依赖（完整列表见 `pyproject.toml`）：
 
-安装依赖：
-
-```bash
-pip install bencodepy pymongo python-dotenv
-```
+| 组件 | 依赖 | 用途 |
+|---|---|---|
+| Crawler | `bencode.py`, `pymongo` | Bencode 编解码、MongoDB 存储 |
+| Intelligence | `openai`, `chromadb`, `sentence-transformers` | LLM 调用、向量检索、Embedding |
+| Enrichment | `httpx`, `feedparser` | 外部数据源抓取、RSS 解析 |
+| Web UI | `streamlit` | 交互界面 |
+| 通用 | `python-dotenv` | 环境变量加载 |
 
 ---
 
-## 使用方法
+## 安装与使用
 
 ```bash
+# 安装项目（可编辑模式）
+make install
+# 或：pip install -e .
+
+# 开发环境（含 pytest、ruff 等）
+make dev
+# 或：pip install -e ".[dev]"
+
 # 启动 MongoDB
 mongod --dbpath /usr/local/var/mongodb --fork --logpath /usr/local/var/log/mongodb/mongo.log
 
-# 启动爬虫（采集 info_hash + 抓取元数据，一步完成）
-python3 -m crawler.main
+# 启动 DHT 爬虫
+make crawler
+# 或：python -m crawler.main
+
+# 启动 Web UI（Intelligence 平台）
+make web
+# 或：cd src && streamlit run intelligence/web/app.py
+
+# 代码检查
+make lint
+
+# 运行测试
+make test
+
+# 测试 + 覆盖率
+make test-cov
 ```
 
 ---
