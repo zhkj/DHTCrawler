@@ -1,6 +1,7 @@
 """MongoDB 连接管理。"""
 import pymongo
-from intelligence.config import MONGO_HOST, MONGO_PORT, MONGO_DB
+
+from intelligence.config import MONGO_DB, MONGO_HOST, MONGO_PORT
 
 _client = None
 

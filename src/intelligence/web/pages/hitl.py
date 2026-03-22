@@ -1,6 +1,7 @@
 """Human-in-the-Loop 告警审批页面。"""
 import streamlit as st
-from intelligence.db import get_pending_alerts, get_alert_logs, mark_alerts_read
+
+from intelligence.db import get_alert_logs, get_pending_alerts, mark_alerts_read
 
 
 def render():

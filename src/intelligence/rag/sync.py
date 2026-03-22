@@ -1,15 +1,17 @@
 """RAG 索引自动同步：MongoDB -> ChromaDB。"""
-import time
-import threading
 import logging
+import threading
+import time
+
 from intelligence.db import get_db, get_recent_torrents
-from intelligence.rag.vectorstore import index_torrents, _get_collection
+from intelligence.rag.vectorstore import _get_collection, index_torrents
 
 logger = logging.getLogger("intelligence.rag.sync")
 
 _DEFAULT_INTERVAL = 120
 _SYNC_BATCH_SIZE = 500
-_sync_thread: threading.Thread | None = None
+_poll_thread: threading.Thread | None = None
+_stream_thread: threading.Thread | None = None
 _sync_stop = threading.Event()
 
 
@@ -29,8 +31,8 @@ def sync_once(batch_size: int = _SYNC_BATCH_SIZE) -> int:
 
 
 def start_polling(interval: int = _DEFAULT_INTERVAL):
-    global _sync_thread
-    if _sync_thread is not None and _sync_thread.is_alive():
+    global _poll_thread
+    if _poll_thread is not None and _poll_thread.is_alive():
         return
 
     _sync_stop.clear()
@@ -48,8 +50,8 @@ def start_polling(interval: int = _DEFAULT_INTERVAL):
             except Exception as e:
                 logger.warning(f"[RAG Sync] 同步出错: {e}")
 
-    _sync_thread = threading.Thread(target=_poll_loop, daemon=True, name="rag-sync")
-    _sync_thread.start()
+    _poll_thread = threading.Thread(target=_poll_loop, daemon=True, name="rag-poll")
+    _poll_thread.start()
 
 
 def stop_polling():
@@ -83,20 +85,30 @@ def start_change_stream():
             logger.warning(f"[RAG Sync] Change Stream 不可用 ({e})，回退到轮询")
             start_polling()
 
-    global _sync_thread
-    if _sync_thread is not None and _sync_thread.is_alive():
+    global _stream_thread
+    if _stream_thread is not None and _stream_thread.is_alive():
         return
     _sync_stop.clear()
-    _sync_thread = threading.Thread(target=_stream_loop, daemon=True, name="rag-sync")
-    _sync_thread.start()
+    _stream_thread = threading.Thread(target=_stream_loop, daemon=True, name="rag-stream")
+    _stream_thread.start()
 
 
 def ensure_synced():
-    global _sync_thread
-    if _sync_thread is not None and _sync_thread.is_alive():
+    if (_poll_thread is not None and _poll_thread.is_alive()) or \
+       (_stream_thread is not None and _stream_thread.is_alive()):
         return
+
+    # 1. 先从 MongoDB 构建完整 BM25 索引
+    try:
+        from intelligence.rag.bm25 import ensure_initialized
+        ensure_initialized()
+    except Exception as e:
+        logger.warning(f"[RAG Sync] BM25 初始化失败: {e}")
+
+    # 2. 再同步 ChromaDB（BM25 仅增量补漏）
     try:
         sync_once()
     except Exception as e:
         logger.warning(f"[RAG Sync] 初始同步失败: {e}")
+
     start_polling()

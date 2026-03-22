@@ -1,6 +1,6 @@
 """RSS 新闻聚合 — 中英文模糊匹配。"""
-import re
 import logging
+import re
 from difflib import SequenceMatcher
 
 import feedparser

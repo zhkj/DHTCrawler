@@ -1,8 +1,8 @@
 """execute_tool 单元测试 — 覆盖所有 6 个工具的调用 + 错误处理。"""
 import json
-from unittest.mock import patch, MagicMock
-import pytest
-from intelligence.core.tools import execute_tool, _sanitize_results, _slim_torrent, _truncate
+from unittest.mock import patch
+
+from intelligence.core.tools import _sanitize_results, _slim_torrent, _truncate, execute_tool
 
 
 class TestExecuteToolSearchDHT:

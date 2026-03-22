@@ -1,6 +1,7 @@
 """可观测性 & 质量评估页面。"""
 import streamlit as st
-from intelligence.db import get_traces, get_evaluations
+
+from intelligence.db import get_evaluations, get_traces
 
 
 def render():

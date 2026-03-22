@@ -1,5 +1,6 @@
 """长期记忆 Repository — 对话摘要 & 用户画像。"""
 from datetime import datetime
+
 from intelligence.db.client import get_db
 
 

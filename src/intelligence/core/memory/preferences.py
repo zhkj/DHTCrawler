@@ -1,5 +1,5 @@
 """用户偏好（告警规则等）。"""
-from intelligence.db import save_alert_rule, get_alert_rules
+from intelligence.db import get_alert_rules, save_alert_rule
 
 
 class UserPreferences:

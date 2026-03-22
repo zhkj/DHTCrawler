@@ -3,8 +3,9 @@ Streamlit Web UI 入口。
 运行：cd src && streamlit run intelligence/web/app.py
 """
 import streamlit as st
+
 from intelligence.core import Orchestrator
-from intelligence.core.memory import UserPreferences, LongTermMemory
+from intelligence.core.memory import LongTermMemory, UserPreferences
 from intelligence.db import get_recent_torrents
 from intelligence.web.pages import chat, hitl, observability
 

@@ -1,6 +1,9 @@
 """工具集单元测试。"""
 from intelligence.core.tools import (
-    _sanitize_results, _slim_torrent, _truncate, TOOLS_SCHEMA,
+    TOOLS_SCHEMA,
+    _sanitize_results,
+    _slim_torrent,
+    _truncate,
 )
 
 

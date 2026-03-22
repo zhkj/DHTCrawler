@@ -1,5 +1,6 @@
 """Reddit 公开 JSON 接口 — 无需 API Key。"""
 import logging
+
 import httpx
 
 logger = logging.getLogger("intelligence.enrichment.reddit")
@@ -19,7 +20,7 @@ def search_reddit(query: str, subreddit: str = "all", limit: int = 5) -> list[di
     }
 
     try:
-        resp = httpx.get(url, headers=headers, params=params, timeout=15,
+        resp = httpx.get(url, headers=headers, params=params, timeout=10,
                          follow_redirects=True)
         resp.raise_for_status()
         posts = resp.json().get("data", {}).get("children", [])

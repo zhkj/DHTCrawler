@@ -1,20 +1,40 @@
 """短期记忆：滑动窗口 + LLM 摘要压缩。"""
-from openai import OpenAI
-from intelligence.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from intelligence.config import LLM_MODEL
+from intelligence.core.llm_client import get_client
 
 MAX_MESSAGES = 20
+MAX_CONTEXT_TOKENS = 12000
 KEEP_RECENT = 6
+
+
+def _estimate_tokens(text: str) -> int:
+    """估算文本 token 数。中文约 1-2 字/token，英文约 4 字符/token。"""
+    if not text:
+        return 0
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    other_chars = len(text) - chinese_chars
+    return chinese_chars + max(1, other_chars // 4)
 
 
 class ConversationMemory:
 
     def __init__(self):
         self.messages: list[dict] = []
-        self._client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+        self._client = get_client()
+
+    def _total_tokens(self) -> int:
+        """估算当前所有消息的总 token 数。"""
+        total = 0
+        for m in self.messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total += _estimate_tokens(content)
+        return total
 
     def add(self, role: str, content: str):
         self.messages.append({"role": role, "content": content})
-        if len(self.messages) > MAX_MESSAGES:
+        if (self._total_tokens() > MAX_CONTEXT_TOKENS
+                or len(self.messages) > MAX_MESSAGES):
             self._compress()
 
     def get(self) -> list[dict]:
@@ -34,9 +54,22 @@ class ConversationMemory:
 
         history_parts = []
         for m in old_messages:
+            role = m.get("role", "")
             content = m.get("content", "")
-            if isinstance(content, str) and content:
-                history_parts.append(f"{m['role'].upper()}: {content}")
+            if role == "tool":
+                # Include tool results in compression summary
+                history_parts.append(f"TOOL_RESULT: {str(content)[:200]}")
+            elif isinstance(content, str) and content:
+                history_parts.append(f"{role.upper()}: {content}")
+            elif role == "assistant" and m.get("tool_calls"):
+                # Include tool call info
+                tool_names = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in m.get("tool_calls", [])
+                ]
+                history_parts.append(
+                    f"ASSISTANT: [调用工具: {', '.join(tool_names)}]"
+                )
         history_text = "\n".join(history_parts)
 
         try:

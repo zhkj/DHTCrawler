@@ -1,7 +1,8 @@
 """Agent 调用链路追踪。"""
-import time
 import logging
+import time
 from datetime import datetime
+
 from intelligence.db import save_trace
 
 logger = logging.getLogger("intelligence.observability.tracer")

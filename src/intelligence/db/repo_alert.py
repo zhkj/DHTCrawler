@@ -1,7 +1,6 @@
 """告警规则 & 告警日志 Repository。"""
 from intelligence.db.client import get_db
 
-
 # ── 告警规则 ──────────────────────────────────────────────────────
 
 def save_alert_rule(user_id: str, keywords: list[str]):

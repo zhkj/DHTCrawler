@@ -1,5 +1,6 @@
-import os
 import logging
+import os
+
 from dotenv import load_dotenv
 
 # 加载项目根 .env
@@ -34,6 +35,9 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5-flash")
 MONGO_HOST = os.getenv("MONGO_HOST", "127.0.0.1")
 MONGO_PORT = int(os.getenv("MONGO_PORT", 27017))
 MONGO_DB = "dht"
+
+# ── BM25 ─────────────────────────────────────────────────────────
+BM25_INIT_LIMIT = int(os.getenv("BM25_INIT_LIMIT", 10000))
 
 # ── ChromaDB ──────────────────────────────────────────────────────
 CHROMA_PATH = os.getenv("CHROMA_PATH", os.path.join(_root, "chroma_db"))

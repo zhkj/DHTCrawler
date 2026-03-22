@@ -1,9 +1,13 @@
 """LLM-as-Judge 质量评估。"""
 import logging
+import os
 from datetime import datetime
-from openai import OpenAI
-from intelligence.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+
+from intelligence.config import LLM_MODEL
+from intelligence.core.llm_client import get_client
 from intelligence.db import save_evaluation
+
+EVAL_MODEL = os.getenv("EVAL_MODEL", LLM_MODEL)
 
 logger = logging.getLogger("intelligence.observability.evaluator")
 
@@ -35,7 +39,7 @@ def evaluate(query: str, response: str, tool_chain: str = "",
     if not response or len(response) < 10:
         return None
 
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    client = get_client()
     prompt = EVAL_PROMPT.format(
         query=query[:500],
         response=response[:1000],
@@ -44,7 +48,7 @@ def evaluate(query: str, response: str, tool_chain: str = "",
 
     try:
         resp = client.chat.completions.create(
-            model=LLM_MODEL,
+            model=EVAL_MODEL,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )

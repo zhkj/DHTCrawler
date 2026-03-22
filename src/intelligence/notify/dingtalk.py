@@ -1,6 +1,8 @@
 """钉钉自定义机器人 Webhook 推送。"""
 import logging
+
 import httpx
+
 from intelligence.config import NOTIFY_DINGTALK_WEBHOOK
 
 logger = logging.getLogger("intelligence.notify.dingtalk")

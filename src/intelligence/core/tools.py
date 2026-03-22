@@ -1,12 +1,13 @@
 """Agent 工具集定义 + 执行器。"""
-import re
 import json
-from intelligence.db import get_torrent_by_hash, get_recent_torrents
-from intelligence.rag.vectorstore import search as rag_search
+import re
+
+from intelligence.db import get_recent_torrents, get_torrent_by_hash
 from intelligence.enrichment import search_hackernews, search_reddit, search_rss
+from intelligence.rag.vectorstore import search as rag_search
 
 # ── 内容清洗 ──────────────────────────────────────────────────────
-
+# NSFW:Not Safe For Work
 _NSFW_PATTERNS = re.compile(
     r'xxx|porn|hentai|sex|nude|erotic|adult|fetish|orgasm'
     r'|milf|anal|blowjob|creampie|gangbang|threesome|lesbian'

@@ -4,10 +4,11 @@
     python tests/evaluation/run_eval.py
     python tests/evaluation/run_eval.py --dataset tests/evaluation/eval_dataset.json
 """
-import json
-import time
 import argparse
+import json
 import logging
+import re
+import time
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -22,6 +23,7 @@ def load_dataset(path: str) -> list[dict]:
 def run_evaluation(dataset_path: str, output_path: str | None = None):
     """运行评估集，统计各项指标。"""
     from intelligence.core.orchestrator import Orchestrator
+    from intelligence.observability.evaluator import evaluate as llm_evaluate
     from intelligence.observability.metrics import MetricsCollector
 
     dataset = load_dataset(dataset_path)
@@ -40,11 +42,13 @@ def run_evaluation(dataset_path: str, output_path: str | None = None):
 
         logger.info(f"[{i + 1}/{len(dataset)}] {query[:50]}...")
 
-        # 收集工具调用
+        # 收集工具调用和工具结果
         tool_calls = []
+        tool_results = []
 
         def on_tool(name, args, result):
             tool_calls.append(name)
+            tool_results.append(str(result) if result else "")
 
         start = time.time()
         try:
@@ -71,6 +75,34 @@ def run_evaluation(dataset_path: str, output_path: str | None = None):
         keyword_hits = sum(1 for kw in expected_keywords if kw in response)
         keyword_coverage = keyword_hits / len(expected_keywords) if expected_keywords else 1.0
 
+        # LLM-as-Judge 评估
+        llm_scores = None
+        avg_score = None
+        if status == "success":
+            try:
+                tool_chain_str = " -> ".join(tool_calls) if tool_calls else ""
+                eval_out = llm_evaluate(
+                    query=query,
+                    response=response,
+                    tool_chain=tool_chain_str,
+                    trace_id=f"eval-{case.get('id', i + 1)}",
+                )
+                if eval_out:
+                    llm_scores = eval_out.get("scores")
+                    avg_score = eval_out.get("avg_score")
+            except Exception as e:
+                logger.warning(f"LLM-as-Judge 评估失败: {e}")
+
+        # Faithfulness 检查：提取回答中的数字和专有名词片段，
+        # 如果在任何工具结果中均未出现则标记为潜在幻觉
+        combined_tool_output = " ".join(tool_results)
+        # 提取回答中所有看起来像具体数据的 token（数字、带数字的混合词）
+        data_tokens = set(re.findall(r"\b\d[\d,.]*\b", response))
+        unfaithful_tokens = [
+            t for t in data_tokens if t not in combined_tool_output
+        ]
+        faithfulness_flag = len(unfaithful_tokens) > 0
+
         eval_result = {
             "id": case.get("id", i + 1),
             "query": query,
@@ -83,6 +115,10 @@ def run_evaluation(dataset_path: str, output_path: str | None = None):
             "tool_precision": round(tool_precision, 3),
             "tool_recall": round(tool_recall, 3),
             "keyword_coverage": round(keyword_coverage, 3),
+            "llm_judge_scores": llm_scores,
+            "llm_judge_avg": avg_score,
+            "faithfulness_flag": faithfulness_flag,
+            "unfaithful_tokens": unfaithful_tokens,
         }
         results.append(eval_result)
 
@@ -94,6 +130,7 @@ def run_evaluation(dataset_path: str, output_path: str | None = None):
             tool_recall=tool_recall,
             keyword_coverage=keyword_coverage,
             status=status,
+            llm_judge_score=avg_score,
         )
 
         # 重置对话上下文
@@ -113,6 +150,7 @@ def run_evaluation(dataset_path: str, output_path: str | None = None):
     print(f"工具调用精确率: {report['avg_tool_precision']}")
     print(f"工具调用召回率: {report['avg_tool_recall']}")
     print(f"关键词覆盖率: {report['avg_keyword_coverage']}")
+    print(f"LLM-as-Judge 平均分: {report['avg_llm_judge']}")
     print()
 
     if report.get("by_category"):

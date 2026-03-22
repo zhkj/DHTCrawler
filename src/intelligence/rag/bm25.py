@@ -17,15 +17,7 @@ _corpus_docs: list[dict] = []  # 保留原始文档用于返回
 
 def _tokenize(text: str) -> list[str]:
     """简单分词：英文按空格/标点切分，中文按字符切分。"""
-    tokens = []
-    # 先按非字母数字中文字符切分
-    segments = re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', text.lower())
-    for seg in segments:
-        if len(seg) == 1 and '\u4e00' <= seg <= '\u9fff':
-            tokens.append(seg)
-        else:
-            tokens.append(seg)
-    return tokens
+    return re.findall(r'[\u4e00-\u9fff]|[a-zA-Z0-9]+', text.lower())
 
 
 def _doc_to_text(doc: dict) -> str:
@@ -103,3 +95,24 @@ def update_index(new_documents: list[dict]):
     if added:
         all_docs = _corpus_docs + added
         build_index(all_docs)
+
+
+def ensure_initialized():
+    """确保 BM25 索引已初始化。
+
+    从 MongoDB 读取种子数据构建索引，解决进程启动时 BM25 为空的问题。
+    """
+    if _bm25_index is not None:
+        return
+
+    try:
+        from intelligence.config import BM25_INIT_LIMIT
+        from intelligence.db.repo_torrent import get_recent_torrents
+        docs = get_recent_torrents(limit=BM25_INIT_LIMIT)
+        if docs:
+            build_index(docs)
+            logger.info(
+                f"BM25 索引从 MongoDB 初始化完成，共 {len(docs)} 条"
+            )
+    except Exception as e:
+        logger.warning(f"BM25 索引初始化失败: {e}")

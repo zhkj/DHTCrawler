@@ -1,7 +1,8 @@
 """HackerNews Algolia API — 免费，无需 API Key。"""
 import logging
-import httpx
 from datetime import datetime, timedelta
+
+import httpx
 
 logger = logging.getLogger("intelligence.enrichment.hn")
 

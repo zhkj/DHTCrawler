@@ -104,6 +104,37 @@ def _vector_search(query: str, top_k: int = 20) -> list[dict]:
     return output
 
 
+def rewrite_query(query: str) -> str:
+    """用 LLM 改写查询，提升检索召回率。
+
+    将用户自然语言查询改写为更适合检索的关键词组合。
+    如果 LLM 调用失败，返回原始查询。
+    """
+    try:
+        from intelligence.config import LLM_MODEL
+        from intelligence.core.llm_client import get_client
+        client = get_client()
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            max_tokens=100,
+            temperature=0,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"将以下查询改写为更适合搜索的关键词（中英文混合，空格分隔，不超过30字）：\n"
+                    f"查询：{query}\n"
+                    f"关键词："
+                ),
+            }],
+        )
+        rewritten = resp.choices[0].message.content.strip()
+        if rewritten and len(rewritten) < 200:
+            return rewritten
+        return query
+    except Exception:
+        return query
+
+
 def search(query: str, top_k: int = 5, use_rerank: bool = True) -> list[dict]:
     """混合检索：Vector + BM25 → RRF 融合 → Cross-Encoder 重排序。
 
@@ -126,12 +157,15 @@ def search(query: str, top_k: int = 5, use_rerank: bool = True) -> list[dict]:
     Returns:
         排序后的种子文档列表。
     """
+    # Query rewriting for better recall
+    rewritten = rewrite_query(query)
+
     recall_k = max(top_k * 4, 20)
 
-    # 1. 向量检索
-    vector_results = _vector_search(query, top_k=recall_k)
+    # 1. 向量检索（使用改写后的查询）
+    vector_results = _vector_search(rewritten, top_k=recall_k)
 
-    # 2. BM25 关键词检索
+    # 2. BM25 关键词检索（保留原始查询以保证精确匹配）
     bm25_results = []
     try:
         from intelligence.rag.bm25 import search as bm25_search

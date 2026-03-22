@@ -34,11 +34,12 @@ def _get_embed_model():
     return _get_embed_model()
 
 
-def cache_lookup(query: str) -> str | None:
-    """查询语义缓存。
+def cache_lookup(query: str, context: str = "") -> str | None:
+    """查询语义缓存（支持上下文感知）。
 
     Args:
         query: 用户查询文本。
+        context: 最近的对话上下文，用于区分相同查询在不同语境下的含义。
 
     Returns:
         缓存的回复文本，未命中返回 None。
@@ -49,7 +50,9 @@ def cache_lookup(query: str) -> str | None:
             return None
 
         model = _get_embed_model()
-        embedding = model.encode([query]).tolist()
+        # Context-aware: combine recent context with query for better cache key
+        cache_key = f"{context} {query}".strip() if context else query
+        embedding = model.encode([cache_key]).tolist()
 
         results = collection.query(
             query_embeddings=embedding,
@@ -88,12 +91,13 @@ def cache_lookup(query: str) -> str | None:
         return None
 
 
-def cache_store(query: str, response: str):
-    """存储查询-回复对到语义缓存。
+def cache_store(query: str, response: str, context: str = ""):
+    """存储查询-回复对到语义缓存（支持上下文感知）。
 
     Args:
         query: 用户查询文本。
         response: Agent 回复文本。
+        context: 最近的对话上下文，用于区分相同查询在不同语境下的含义。
     """
     if not query or not response or len(response) < 20:
         return
@@ -101,7 +105,8 @@ def cache_store(query: str, response: str):
     try:
         collection = _get_cache_collection()
         model = _get_embed_model()
-        embedding = model.encode([query]).tolist()
+        cache_key = f"{context} {query}".strip() if context else query
+        embedding = model.encode([cache_key]).tolist()
 
         doc_id = f"cache_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
@@ -125,10 +130,10 @@ class TokenTracker:
     """Token 使用量追踪器。"""
 
     def __init__(self):
-        self.total_prompt_tokens = 0
-        self.total_completion_tokens = 0
-        self.total_tokens = 0
-        self.call_count = 0
+        self.total_prompt_tokens = 0      # 累计输入 token（system + user + 历史消息 + 工具结果）
+        self.total_completion_tokens = 0  # 累计输出 token（LLM 生成的回答和工具调用）
+        self.total_tokens = 0             # 累计总 token（prompt + completion）
+        self.call_count = 0               # LLM API 调用次数（含 plan/ReAct/合成等所有阶段）
 
     def track(self, usage):
         """从 OpenAI response.usage 中提取 token 统计。"""

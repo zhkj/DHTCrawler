@@ -1,6 +1,8 @@
 """飞书自定义机器人 Webhook 推送。"""
 import logging
+
 import httpx
+
 from intelligence.config import NOTIFY_FEISHU_WEBHOOK
 
 logger = logging.getLogger("intelligence.notify.feishu")
@@ -60,7 +62,7 @@ def push_review_card(torrent_name: str, keywords: str, info_hash: str,
                     "tag": "note",
                     "elements": [{
                         "tag": "plain_text",
-                        "content": "Human-in-the-Loop: 此告警置信度不足，需人工确认后才会正式推送。",
+                        "content": "HITL: 此告警置信度不足，需人工确认后才会正式推送。",
                     }],
                 },
             ],

@@ -1,7 +1,9 @@
 """Telegram Bot API 推送。"""
 import logging
+
 import httpx
-from intelligence.config import NOTIFY_TELEGRAM_TOKEN, NOTIFY_TELEGRAM_CHAT_ID
+
+from intelligence.config import NOTIFY_TELEGRAM_CHAT_ID, NOTIFY_TELEGRAM_TOKEN
 
 logger = logging.getLogger("intelligence.notify.telegram")
 _TIMEOUT = 10

@@ -1,15 +1,19 @@
 """LongTermMemory 单元测试 — 测试 recall、save、profile。"""
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import MagicMock, patch
+
+
+def _make_mock_client():
+    """创建 mock OpenAI client。"""
+    return MagicMock()
 
 
 class TestLongTermMemorySave:
 
     @patch("intelligence.core.memory.long_term.save_conversation_summary")
-    @patch("intelligence.core.memory.long_term.OpenAI")
-    def test_save_conversation_generates_summary(self, mock_openai_cls, mock_save):
-        mock_client = MagicMock()
-        mock_openai_cls.return_value = mock_client
+    @patch("intelligence.core.memory.long_term.get_client")
+    def test_save_conversation_generates_summary(self, mock_get_client, mock_save):
+        mock_client = _make_mock_client()
+        mock_get_client.return_value = mock_client
         mock_resp = MagicMock()
         mock_resp.choices = [MagicMock()]
         mock_resp.choices[0].message.content = "摘要：这是一段关于AI的讨论\n主题：AI,安全,泄露"
@@ -44,10 +48,10 @@ class TestLongTermMemorySave:
             coll.add.assert_called_once()
 
     @patch("intelligence.core.memory.long_term.save_conversation_summary")
-    @patch("intelligence.core.memory.long_term.OpenAI")
-    def test_save_skips_short_conversation(self, mock_openai_cls, mock_save):
-        mock_client = MagicMock()
-        mock_openai_cls.return_value = mock_client
+    @patch("intelligence.core.memory.long_term.get_client")
+    def test_save_skips_short_conversation(self, mock_get_client, mock_save):
+        mock_client = _make_mock_client()
+        mock_get_client.return_value = mock_client
 
         from intelligence.core.memory.long_term import LongTermMemory
         mem = LongTermMemory.__new__(LongTermMemory)
@@ -61,10 +65,10 @@ class TestLongTermMemorySave:
 
 class TestLongTermMemoryRecall:
 
-    @patch("intelligence.core.memory.long_term.OpenAI")
-    def test_recall_returns_relevant_memories(self, mock_openai_cls):
-        mock_client = MagicMock()
-        mock_openai_cls.return_value = mock_client
+    @patch("intelligence.core.memory.long_term.get_client")
+    def test_recall_returns_relevant_memories(self, mock_get_client):
+        mock_client = _make_mock_client()
+        mock_get_client.return_value = mock_client
 
         from intelligence.core.memory.long_term import LongTermMemory
         mem = LongTermMemory.__new__(LongTermMemory)
@@ -77,8 +81,8 @@ class TestLongTermMemoryRecall:
             "ids": [["doc1", "doc2"]],
             "documents": [["关于AI安全的讨论", "关于数据泄露的分析"]],
             "metadatas": [[
-                {"user_id": "test", "topics": "AI,安全", "created_at": "2024-01-01"},
-                {"user_id": "test", "topics": "泄露", "created_at": "2024-01-02"},
+                {"user_id": "test", "topics": "AI,安全", "created_at": "2026-03-17"},
+                {"user_id": "test", "topics": "泄露", "created_at": "2026-03-16"},
             ]],
             "distances": [[0.2, 0.4]],
         }
@@ -100,10 +104,10 @@ class TestLongTermMemoryProfile:
 
     @patch("intelligence.core.memory.long_term.get_user_profile")
     @patch("intelligence.core.memory.long_term.save_user_profile")
-    @patch("intelligence.core.memory.long_term.OpenAI")
-    def test_update_and_get_profile(self, mock_openai_cls, mock_save, mock_get):
-        mock_client = MagicMock()
-        mock_openai_cls.return_value = mock_client
+    @patch("intelligence.core.memory.long_term.get_client")
+    def test_update_and_get_profile(self, mock_get_client, mock_save, mock_get):
+        mock_client = _make_mock_client()
+        mock_get_client.return_value = mock_client
 
         mock_get.return_value = {"focus_areas": ["AI"]}
 
@@ -120,10 +124,10 @@ class TestLongTermMemoryProfile:
         assert saved_profile["analysis_style"] == "详细"
 
     @patch("intelligence.core.memory.long_term.get_user_profile", return_value={})
-    @patch("intelligence.core.memory.long_term.OpenAI")
-    def test_get_context_prompt_empty_profile(self, mock_openai_cls, mock_get):
-        mock_client = MagicMock()
-        mock_openai_cls.return_value = mock_client
+    @patch("intelligence.core.memory.long_term.get_client")
+    def test_get_context_prompt_empty_profile(self, mock_get_client, mock_get):
+        mock_client = _make_mock_client()
+        mock_get_client.return_value = mock_client
 
         from intelligence.core.memory.long_term import LongTermMemory
         mem = LongTermMemory.__new__(LongTermMemory)

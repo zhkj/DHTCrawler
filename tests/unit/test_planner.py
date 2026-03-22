@@ -1,8 +1,8 @@
-"""Planner 单元测试 — 测试 plan 生成、解析、执行和 Reflect。"""
+"""Planner 单元测试 — 测试 plan 生成、解析、执行、状态管理和 Reflect。"""
 import json
-from unittest.mock import patch, MagicMock
-import pytest
-from intelligence.core.planner import Plan, Planner
+from unittest.mock import MagicMock, patch
+
+from intelligence.core.planner import Plan, Planner, StepStatus
 
 
 class TestPlan:
@@ -21,14 +21,15 @@ class TestPlan:
             complexity="multi_step",
             steps=[
                 {"id": 1, "tool": "get_trending", "args": {"limit": 10}, "depends_on": []},
-                {"id": 2, "tool": "search_hackernews", "args": {"query": "test"}, "depends_on": [1]},
+                {"id": 2, "tool": "search_hackernews",
+                 "args": {"query": "test"}, "depends_on": [1]},
             ],
             final_instruction="汇总分析",
         )
         assert not plan.is_simple
         assert len(plan.steps) == 2
 
-    def test_get_executable_steps(self):
+    def test_get_executable_steps_basic(self):
         plan = Plan(
             complexity="multi_step",
             steps=[
@@ -39,16 +40,30 @@ class TestPlan:
             final_instruction="",
         )
 
-        # 初始只有 step 1 可执行
         executable = plan.get_executable_steps()
         assert len(executable) == 1
         assert executable[0]["id"] == 1
 
-        # step 1 完成后，step 2 和 3 可执行
-        plan.step_results[1] = '["result"]'
+        plan.mark_success(1, '["result"]')
         executable = plan.get_executable_steps()
         assert len(executable) == 2
         assert {s["id"] for s in executable} == {2, 3}
+
+    def test_get_executable_steps_skips_on_failed_dep(self):
+        """依赖步骤失败时，下游步骤自动标记为 skipped。"""
+        plan = Plan(
+            complexity="multi_step",
+            steps=[
+                {"id": 1, "tool": "get_trending", "args": {}, "depends_on": []},
+                {"id": 2, "tool": "search_hackernews", "args": {}, "depends_on": [1]},
+            ],
+            final_instruction="",
+        )
+
+        plan.mark_failed(1, '{"error": "timeout"}', "timeout")
+        executable = plan.get_executable_steps()
+        assert len(executable) == 0
+        assert plan.step_status[2] == StepStatus.SKIPPED
 
     def test_resolve_args_with_reference(self):
         plan = Plan(
@@ -61,10 +76,25 @@ class TestPlan:
             final_instruction="",
         )
 
-        plan.step_results[1] = json.dumps([{"name": "Ubuntu ISO"}, {"name": "Other"}])
-
+        plan.mark_success(1, json.dumps([{"name": "Ubuntu ISO"}, {"name": "Other"}]))
         resolved = plan.resolve_args(plan.steps[1])
         assert resolved["query"] == "Ubuntu ISO"
+
+    def test_resolve_args_returns_none_on_failed_ref(self):
+        """引用的步骤失败时，resolve_args 返回 None。"""
+        plan = Plan(
+            complexity="multi_step",
+            steps=[
+                {"id": 1, "tool": "get_trending", "args": {}, "depends_on": []},
+                {"id": 2, "tool": "search_hackernews",
+                 "args": {"query": "{step_1.results[0].name}"}, "depends_on": [1]},
+            ],
+            final_instruction="",
+        )
+
+        plan.mark_failed(1, '{"error": "fail"}', "fail")
+        resolved = plan.resolve_args(plan.steps[1])
+        assert resolved is None
 
     def test_resolve_args_no_reference(self):
         plan = Plan(
@@ -79,16 +109,56 @@ class TestPlan:
         plan = Plan(
             complexity="multi_step",
             steps=[
-                {"id": 1, "tool": "a", "args": {}, "depends_on": []},
-                {"id": 2, "tool": "b", "args": {}, "depends_on": []},
+                {"id": 1, "tool": "search_dht", "args": {}, "depends_on": []},
+                {"id": 2, "tool": "get_trending", "args": {}, "depends_on": []},
             ],
             final_instruction="",
         )
         assert not plan.all_done()
-        plan.step_results[1] = "done"
+        plan.mark_success(1, "done")
         assert not plan.all_done()
-        plan.step_results[2] = "done"
+        plan.mark_success(2, "done")
         assert plan.all_done()
+
+    def test_mark_success_and_failed(self):
+        plan = Plan("simple", [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}], "")
+        plan.mark_success(1, '{"data": "ok"}')
+        assert plan.step_status[1] == StepStatus.SUCCESS
+        assert not plan.is_step_failed(1)
+
+        plan2 = Plan("simple", [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}], "")
+        plan2.mark_failed(1, '{"error": "bad"}', "bad")
+        assert plan2.step_status[1] == StepStatus.FAILED
+        assert plan2.is_step_failed(1)
+
+    def test_add_steps(self):
+        steps = [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}]
+        plan = Plan("multi_step", steps, "")
+        plan.add_steps([{"id": 100, "tool": "search_reddit", "args": {"query": "补充"}}])
+        assert len(plan.steps) == 2
+        assert plan.steps[1]["id"] == 100
+
+    def test_add_steps_no_duplicate(self):
+        steps = [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}]
+        plan = Plan("multi_step", steps, "")
+        plan.add_steps([{"id": 1, "tool": "search_dht", "args": {}}])
+        assert len(plan.steps) == 1
+
+    def test_summary_for_synthesis(self):
+        plan = Plan(
+            "multi_step",
+            [
+                {"id": 1, "tool": "search_dht", "args": {}, "depends_on": [], "purpose": "搜索"},
+                {"id": 2, "tool": "get_trending", "args": {}, "depends_on": [1], "purpose": "趋势"},
+            ],
+            "",
+        )
+        plan.mark_success(1, '[{"name": "test"}]')
+        plan.mark_skipped(2, "依赖失败")
+
+        summary = plan.summary_for_synthesis()
+        assert "搜索" in summary
+        assert "已跳过" in summary
 
     def test_get_step(self):
         plan = Plan(
@@ -132,10 +202,24 @@ class TestPlannerParsePlan:
         assert data["steps"][0].get("depends_on") == []
         assert data["steps"][0].get("args") == {}
 
+    def test_parse_filters_invalid_tools(self):
+        planner = Planner.__new__(Planner)
+        planner._client = MagicMock()
+
+        data = planner._parse_plan(json.dumps({
+            "complexity": "multi_step",
+            "steps": [
+                {"id": 1, "tool": "search_dht", "args": {}},
+                {"id": 2, "tool": "hack_system", "args": {}},
+            ],
+        }))
+        assert len(data["steps"]) == 1
+        assert data["steps"][0]["tool"] == "search_dht"
+
 
 class TestPlannerPlan:
 
-    @patch("intelligence.core.planner.OpenAI")
+    @patch("intelligence.core.planner.get_client")
     def test_plan_returns_plan_object(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -146,7 +230,8 @@ class TestPlannerPlan:
             "complexity": "multi_step",
             "steps": [
                 {"id": 1, "tool": "get_trending", "args": {"limit": 10}, "depends_on": []},
-                {"id": 2, "tool": "search_hackernews", "args": {"query": "test"}, "depends_on": [1]},
+                {"id": 2, "tool": "search_hackernews",
+                 "args": {"query": "test"}, "depends_on": [1]},
             ],
             "final_instruction": "汇总",
         })
@@ -159,7 +244,7 @@ class TestPlannerPlan:
         assert not plan.is_simple
         assert len(plan.steps) == 2
 
-    @patch("intelligence.core.planner.OpenAI")
+    @patch("intelligence.core.planner.get_client")
     def test_plan_fallback_on_error(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -174,7 +259,7 @@ class TestPlannerPlan:
 
 class TestPlannerReflect:
 
-    @patch("intelligence.core.planner.OpenAI")
+    @patch("intelligence.core.planner.get_client")
     def test_reflect_sufficient(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
@@ -185,26 +270,58 @@ class TestPlannerReflect:
         mock_client.chat.completions.create.return_value = mock_resp
 
         planner = Planner()
-        plan = Plan("multi_step", [{"id": 1, "tool": "a", "args": {}, "depends_on": []}], "")
-        plan.step_results[1] = "some result"
+        plan = Plan(
+            "multi_step",
+            [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}],
+            "",
+        )
+        plan.mark_success(1, "some result")
 
         result = planner.reflect(plan, "test query")
-        assert result is None
+        assert result == []
 
-    @patch("intelligence.core.planner.OpenAI")
-    def test_reflect_need_more(self, mock_openai_cls):
+    @patch("intelligence.core.planner.get_client")
+    def test_reflect_returns_supplement_steps(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client
 
         mock_resp = MagicMock()
         mock_resp.choices = [MagicMock()]
-        mock_resp.choices[0].message.content = "NEED_MORE: 需要补充Reddit讨论"
+        mock_resp.choices[0].message.content = json.dumps([
+            {"id": 100, "tool": "search_reddit", "args": {"query": "补充讨论"}, "purpose": "补充"}
+        ])
         mock_client.chat.completions.create.return_value = mock_resp
 
         planner = Planner()
-        plan = Plan("multi_step", [{"id": 1, "tool": "a", "args": {}, "depends_on": []}], "")
-        plan.step_results[1] = "some result"
+        plan = Plan(
+            "multi_step",
+            [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}],
+            "",
+        )
+        plan.mark_success(1, "some result")
 
         result = planner.reflect(plan, "test query")
-        assert result is not None
-        assert "Reddit" in result
+        assert len(result) == 1
+        assert result[0]["tool"] == "search_reddit"
+
+    @patch("intelligence.core.planner.get_client")
+    def test_reflect_filters_invalid_tools(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = json.dumps([
+            {"id": 100, "tool": "hack_system", "args": {}},
+            {"id": 101, "tool": "search_news", "args": {"query": "安全"}},
+        ])
+        mock_client.chat.completions.create.return_value = mock_resp
+
+        planner = Planner()
+        steps = [{"id": 1, "tool": "search_dht", "args": {}, "depends_on": []}]
+        plan = Plan("multi_step", steps, "")
+        plan.mark_success(1, "result")
+
+        result = planner.reflect(plan, "test")
+        assert len(result) == 1
+        assert result[0]["tool"] == "search_news"

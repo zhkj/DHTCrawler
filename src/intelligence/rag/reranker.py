@@ -65,7 +65,7 @@ def reciprocal_rank_fusion(
 
 def rerank(query: str, documents: list[dict], top_k: int = 5,
            text_key: str = "name") -> list[dict]:
-    """Cross-Encoder 精排。
+    """Cross-Encoder 重排序，模型不可用时降级为直接截断。
 
     对每个 query-document pair 用 Cross-Encoder 打分，返回 top_k。
 
@@ -84,25 +84,29 @@ def rerank(query: str, documents: list[dict], top_k: int = 5,
     if len(documents) <= top_k:
         return documents
 
-    model = _get_cross_encoder()
+    try:
+        model = _get_cross_encoder()
 
-    # 构建 query-document pairs
-    pairs = []
-    for doc in documents:
-        text = doc.get(text_key, "") or doc.get("name", "")
-        pairs.append([query, text])
+        # 构建 query-document pairs
+        pairs = []
+        for doc in documents:
+            text = doc.get(text_key, "") or doc.get("name", "")
+            pairs.append([query, text])
 
-    # 打分
-    scores = model.predict(pairs)
+        # 打分
+        scores = model.predict(pairs)
 
-    # 按分数排序
-    scored_docs = list(zip(documents, scores))
-    scored_docs.sort(key=lambda x: x[1], reverse=True)
+        # 按分数排序
+        scored_docs = list(zip(documents, scores))
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
 
-    results = []
-    for doc, score in scored_docs[:top_k]:
-        doc = doc.copy()
-        doc["rerank_score"] = round(float(score), 4)
-        results.append(doc)
+        results = []
+        for doc, score in scored_docs[:top_k]:
+            doc = doc.copy()
+            doc["rerank_score"] = round(float(score), 4)
+            results.append(doc)
 
-    return results
+        return results
+    except Exception as e:
+        logger.warning(f"Reranker 不可用，降级为直接截断: {e}")
+        return documents[:top_k]

@@ -2,18 +2,21 @@
 Monitor Agent — 后台监控新入库种子，匹配告警关键词并触发告警。
 支持 Human-in-the-Loop：高置信自动推送，中低置信待人工审批。
 """
+import logging
 import re
 import threading
-import logging
 from datetime import datetime
 
 from intelligence.config import SIGNAL_KEYWORDS
 from intelligence.db import (
-    get_db, get_all_alert_rules, save_alert_log,
+    get_all_alert_rules,
+    get_db,
+    save_alert_log,
 )
+from intelligence.monitor.confidence import refresh_false_positives
+from intelligence.monitor.confidence import score as score_confidence
 from intelligence.notify import push_all as _notify_push_all
 from intelligence.notify.dispatcher import push_pending_review
-from intelligence.monitor.confidence import score as score_confidence, refresh_false_positives
 
 logger = logging.getLogger("intelligence.monitor")
 
@@ -37,6 +40,22 @@ def _build_signal_pattern() -> re.Pattern:
 _signal_pattern = _build_signal_pattern()
 
 
+def _normalize_text(text: str) -> str:
+    """标准化文本：统一分隔符、转小写。"""
+    text = text.lower()
+    text = re.sub(r'[_\-./\\]', ' ', text)  # normalize separators
+    return text
+
+
+def _simple_stem(word: str) -> str:
+    """简单词干化：去除常见英文后缀。"""
+    word = word.lower()
+    for suffix in ('ing', 'ed', 'er', 'ers', 's', 'es', 'tion', 'ment'):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)]
+    return word
+
+
 def _match_torrent(torrent: dict, user_rules: list[dict]) -> list[dict]:
     name = torrent.get("name", "")
     files = torrent.get("files", [])
@@ -48,7 +67,7 @@ def _match_torrent(torrent: dict, user_rules: list[dict]) -> list[dict]:
             file_names.append(str(f[0]))
         else:
             file_names.append(str(f))
-    searchable = f"{name} {' '.join(file_names)}".lower()
+    searchable = _normalize_text(f"{name} {' '.join(file_names)}")
 
     alerts = []
     now = datetime.now()
@@ -56,13 +75,18 @@ def _match_torrent(torrent: dict, user_rules: list[dict]) -> list[dict]:
 
     # 1. 全局信号词匹配
     signal_matches = _signal_pattern.findall(searchable)
-    if signal_matches:
-        matched_categories = set()
-        for cat, words in SIGNAL_KEYWORDS.items():
-            for w in words:
-                if w.lower() in searchable:
-                    matched_categories.add(cat)
+    matched_categories: set[str] = set()
 
+    # Also check stemmed versions of signal keywords
+    for cat, words in SIGNAL_KEYWORDS.items():
+        for w in words:
+            stem = _simple_stem(w)
+            if stem in searchable or w.lower() in searchable:
+                matched_categories.add(cat)
+                if w.lower() not in [m.lower() for m in signal_matches]:
+                    signal_matches.append(w)
+
+    if signal_matches:
         matched_kws = list(set(m.lower() for m in signal_matches))
         cats = list(matched_categories)
         confidence = score_confidence(matched_kws, cats, is_user_rule=False)
@@ -87,7 +111,12 @@ def _match_torrent(torrent: dict, user_rules: list[dict]) -> list[dict]:
         keywords = rule.get("keywords", [])
         if not keywords:
             continue
-        matched = [kw for kw in keywords if kw.lower() in searchable]
+        matched = []
+        for kw in keywords:
+            kw_lower = kw.lower()
+            kw_stem = _simple_stem(kw_lower)
+            if kw_lower in searchable or kw_stem in searchable:
+                matched.append(kw)
         if matched:
             confidence = score_confidence(matched, [], is_user_rule=True)
             alerts.append({

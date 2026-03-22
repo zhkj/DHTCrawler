@@ -1,6 +1,7 @@
 """通知调度器 — 格式化告警 + 路由到各渠道。"""
 import logging
-from intelligence.notify import feishu, dingtalk, telegram
+
+from intelligence.notify import dingtalk, feishu, telegram
 
 logger = logging.getLogger("intelligence.notify")
 
